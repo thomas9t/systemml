@@ -106,9 +106,7 @@ object PredictionService extends PredictionJsonProtocol {
   implicit val timeout = akka.util.Timeout(10 seconds)
   val userPassword = new HashMap[String, String]()
   var bindingFuture: Future[Http.ServerBinding] = null
-  def predict(request:PredictionRequest, model:Model):Future[PredictionResponse] = future {
-    new PredictionResponse("test-response", "test-format")
-  }
+  var scheduler:Scheduler = null
   
   def getCommandLineOptions():org.apache.commons.cli.Options = {
     val hostOption = new org.apache.commons.cli.Option("ip", true, "IP address")
@@ -151,6 +149,14 @@ object PredictionService extends PredictionJsonProtocol {
     val models = new HashMap[String, Model]
     models.put("test", new Model("test", "test-path"))
     
+    // TODO: Set the scheduler using factory
+    scheduler = new NoBatching(timeout)
+    scheduler.addModel(models.get("test"))
+    val gpus = null
+    val numCores = 1
+    val maxMemory = Runtime.getRuntime().totalMemory()
+    scheduler.start(numCores, maxMemory, gpus)
+    
     // Define unsecured routes: /predict and /health
     val unsecuredRoutes = {
       path("predict") {
@@ -161,7 +167,7 @@ object PredictionService extends PredictionJsonProtocol {
                 try {
                   currNumRequests.increment()
                   val start = System.nanoTime()
-                  val response = Await.result(predict(request, models.get(request.model)), timeout)
+                  val response = Await.result(scheduler.enqueue(request, models.get(request.model)), timeout)
                   totalTime.add(System.nanoTime()-start)
                   numCompletedPredictions.increment()
                   complete(StatusCodes.OK, response)
@@ -191,7 +197,7 @@ object PredictionService extends PredictionJsonProtocol {
         user =>
           path("shutdown") {
             get {
-              shutdownService(user)
+              shutdownService(user, scheduler)
             }
           } ~
           path("health") {
@@ -229,10 +235,11 @@ object PredictionService extends PredictionJsonProtocol {
     }
   }
   
-  def shutdownService(user:String):StandardRoute = {
+  def shutdownService(user:String, scheduler:Scheduler):StandardRoute = {
     if(user.equals("admin")) {
       try {
         Http().shutdownAllConnectionPools() andThen { case _ => bindingFuture.flatMap(_.unbind()).onComplete(_ ⇒ system.terminate()) }
+        scheduler.shutdown()
         complete(StatusCodes.OK, "Shutting down the server.")
       } finally {
         new Thread(new Runnable { 
