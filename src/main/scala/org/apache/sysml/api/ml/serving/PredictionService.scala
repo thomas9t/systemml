@@ -29,9 +29,23 @@ import com.typesafe.config.ConfigFactory
 import org.apache.commons.cli.{PosixParser, CommandLineParser, CommandLine}
 import scala.concurrent.duration._
 import java.util.HashMap
+import akka.http.scaladsl.marshallers.sprayjson.SprayJsonSupport
+import spray.json._
+import java.util.concurrent.atomic.LongAdder
+import scala.concurrent.{Await, Future, future}
 
-case class PredictionRequest(modelId:String, input:String)
-class PredictionService(implicit val executionContext: ExecutionContext) {
+// format: can be file, binary, csv, ijv, jpeg, ...
+case class PredictionRequest(model:String, inputs:String, format:String, num_input:Option[Int])
+case class Model(model:String, path:String)
+case class PredictionResponse(response:String, format:String)
+
+trait PredictionJsonProtocol extends SprayJsonSupport  with DefaultJsonProtocol {
+  implicit val predictionRequestFormat = jsonFormat4(PredictionRequest)
+  implicit val predictionResponseFormat = jsonFormat2(PredictionResponse)
+}
+
+class PredictionService {
+  
 }
 
 /*
@@ -73,50 +87,125 @@ echo "Include the following jars into the classpath: "$JARS
 java -cp $JARS org.apache.sysml.api.ml.serving.PredictionService -port 9000 -admin_password admin
 
 4. Check the health of the server:
-curl -XGET localhost:9000/health
+curl -u admin -XGET localhost:9000/health
 
 5. Shutdown the server:
 curl -u admin -XGET localhost:9000/shutdown
 
  */
-object PredictionService  {
+object PredictionService extends PredictionJsonProtocol {
+  // val LOG = LogFactory.getLog(classOf[PredictionService].getName())
   implicit val system = ActorSystem("systemml-prediction-service")
   implicit val materializer = ActorMaterializer()
   implicit val executionContext = system.dispatcher
   implicit val timeout = akka.util.Timeout(10 seconds)
   val userPassword = new HashMap[String, String]()
   var bindingFuture: Future[Http.ServerBinding] = null
-  def main(args: Array[String]): Unit = {
+  def predict(request:PredictionRequest, model:Model):Future[PredictionResponse] = future {
+    new PredictionResponse("test-response", "test-format")
+  }
+  
+  def getCommandLineOptions():org.apache.commons.cli.Options = {
     val hostOption = new org.apache.commons.cli.Option("ip", true, "IP address")
     val portOption = new org.apache.commons.cli.Option("port", true, "Port number")
+    val numRequestOption = new org.apache.commons.cli.Option("max_requests", true, "Maximum number of requests")
+    val timeoutOption = new org.apache.commons.cli.Option("timeout", true, "Timeout in milliseconds")
     val passwdOption = new org.apache.commons.cli.Option("admin_password", true, "Admin password. Default: admin")
+    val helpOption = new org.apache.commons.cli.Option("help", false, "Show usage message")
+    val maxSizeOption = new org.apache.commons.cli.Option("max_bytes", true, "Maximum size of request in bytes")
+    
+    // Only port is required option
     portOption.setRequired(true)
-    val options = new org.apache.commons.cli.Options().addOption(portOption)
-		val line = new PosixParser().parse(options, args);
+    
+    return new org.apache.commons.cli.Options()
+          .addOption(hostOption).addOption(portOption).addOption(numRequestOption)
+          .addOption(passwdOption).addOption(timeoutOption).addOption(helpOption).addOption(maxSizeOption)
+  }
+  
+  def main(args: Array[String]): Unit = {
+    // Parse commandline variables:
+    val options = getCommandLineOptions
+		val line = new PosixParser().parse(getCommandLineOptions, args);
+		if(line.hasOption("help")) {
+				new org.apache.commons.cli.HelpFormatter().printHelp( "systemml-prediction-service", options )
+				return
+		}
     userPassword.put("admin", line.getOptionValue("admin_password", "admin"))
+    val currNumRequests = new LongAdder
+    val maxNumRequests = if(line.hasOption("max_requests")) line.getOptionValue("max_requests").toLong else Long.MaxValue
+    val timeout = if(line.hasOption("timeout"))  Duration(line.getOptionValue("timeout").toLong, MILLISECONDS) else Duration.Inf 
+    val sizeDirective = if(line.hasOption("max_bytes")) withSizeLimit(line.getOptionValue("max_bytes").toLong) else withoutSizeLimit 
+    
+    // Initialize statistics counters
+    val numTimeouts = new LongAdder
+    val numFailures = new LongAdder
+    val totalTime = new LongAdder
+    val numCompletedPredictions = new LongAdder
+    
+    // For now the models need to be loaded every time. TODO: pass the local to serialized models via commandline 
+    val models = new HashMap[String, Model]
+    models.put("test", new Model("test", "test-path"))
+    
+    // Define unsecured routes: /predict and /health
     val unsecuredRoutes = {
-      path("health") {
-        get {
-          complete(StatusCodes.OK, "Service is working great!")
+      path("predict") {
+        post {
+          validate(currNumRequests.longValue() < maxNumRequests, "The prediction server received too many requests. Ignoring the current request.") {
+            entity(as[PredictionRequest]) { request =>
+              validate(models.containsKey(request.model), "The model is not available.") {
+                try {
+                  currNumRequests.increment()
+                  val start = System.nanoTime()
+                  val response = Await.result(predict(request, models.get(request.model)), timeout)
+                  totalTime.add(System.nanoTime()-start)
+                  numCompletedPredictions.increment()
+                  complete(StatusCodes.OK, response)
+                } catch {
+                  case e:scala.concurrent.TimeoutException => {
+                    numTimeouts.increment()
+                    complete(StatusCodes.RequestTimeout, "Timeout occured")
+                  }
+                  case e:Exception => {
+                    numFailures.increment()
+                    e.printStackTrace()
+                    complete(StatusCodes.InternalServerError, "Exception occured while executing the prediction request:" + e.getMessage)  
+                  }
+                } finally {
+                  currNumRequests.decrement()
+                }
+              }
+            }
+          }
         }
       }
     }
     
     // For administration: This can be later extended for supporting multiple users.
     val securedRoutes = {
-      logRequestResult("akka-http-secured-service") {
-        authenticateBasicAsync(realm = "secure site", userAuthenticate) {
-          user =>
-            path("shutdown") {
-              get {
-                shutdownService(user)
-              }
+      authenticateBasicAsync(realm = "secure site", userAuthenticate) {
+        user =>
+          path("shutdown") {
+            get {
+              shutdownService(user)
             }
-        }
+          } ~
+          path("health") {
+            get {
+              val stats = "Number of requests (total/completed/timeout/failures):" + currNumRequests.longValue() + "/" + numCompletedPredictions.longValue() +
+                  numTimeouts.longValue() + numFailures.longValue() + ".\n" +
+                  "Average prediction time:" + ((totalTime.doubleValue()*1e-6) / numCompletedPredictions.longValue()) + "ms.\n" 
+              complete(StatusCodes.OK, stats)
+            }
+          }
       }
     }
     
-    bindingFuture = Http().bindAndHandle(unsecuredRoutes ~ securedRoutes, line.getOptionValue("ip", "localhost"), line.getOptionValue("port").toInt)
+    bindingFuture = Http().bindAndHandle(
+        sizeDirective { // Both secured and unsecured routes need to respect the size restriction
+          unsecuredRoutes ~ securedRoutes
+        }, 
+      line.getOptionValue("ip", "localhost"), line.getOptionValue("port").toInt)
+    
     println(s"Prediction Server online.\nPress RETURN to stop...")
     scala.io.StdIn.readLine()
     bindingFuture
