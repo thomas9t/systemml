@@ -77,7 +77,9 @@ wget http://central.maven.org/maven2/org/reactivestreams/reactive-streams/1.0.2/
 wget http://central.maven.org/maven2/org/scala-lang/scala-library/2.11.12/scala-library-2.11.12.jar
 wget http://central.maven.org/maven2/org/scala-lang/scala-parser-combinators/2.11.0-M4/scala-parser-combinators-2.11.0-M4.jar
 wget http://central.maven.org/maven2/commons-cli/commons-cli/1.4/commons-cli-1.4.jar
-JARS=$JARS"config-1.3.3.jar:ssl-config-core_2.11-0.2.4.jar:reactive-streams-1.0.2.jar:commons-cli-1.4.jar:scala-parser-combinators-2.11.0-M4.jar:scala-library-2.11.12.jar"
+wget http://central.maven.org/maven2/com/typesafe/akka/akka-http-spray-json-experimental_2.11/2.4.11.2/akka-http-spray-json-experimental_2.11-2.4.11.2.jar
+wget http://central.maven.org/maven2/io/spray/spray-json_2.11/1.3.2/spray-json_2.11-1.3.2.jar
+JARS=$JARS"config-1.3.3.jar:ssl-config-core_2.11-0.2.4.jar:reactive-streams-1.0.2.jar:commons-cli-1.4.jar:scala-parser-combinators-2.11.0-M4.jar:scala-library-2.11.12.jar:akka-http-spray-json-experimental_2.11-2.4.11.2.jar:spray-json_2.11-1.3.2.jar"
 echo "Include the following jars into the classpath: "$JARS
 
 
@@ -89,7 +91,10 @@ java -cp $JARS org.apache.sysml.api.ml.serving.PredictionService -port 9000 -adm
 4. Check the health of the server:
 curl -u admin -XGET localhost:9000/health
 
-5. Shutdown the server:
+5. Perform prediction
+curl -XPOST -H "Content-Type:application/json" -d '{ "inputs":"1,2,3", "format":"csv", "model":"test", "num_input":1 }' localhost:9000/predict
+
+6. Shutdown the server:
 curl -u admin -XGET localhost:9000/shutdown
 
  */
@@ -191,9 +196,9 @@ object PredictionService extends PredictionJsonProtocol {
           } ~
           path("health") {
             get {
-              val stats = "Number of requests (total/completed/timeout/failures):" + currNumRequests.longValue() + "/" + numCompletedPredictions.longValue() +
-                  numTimeouts.longValue() + numFailures.longValue() + ".\n" +
-                  "Average prediction time:" + ((totalTime.doubleValue()*1e-6) / numCompletedPredictions.longValue()) + "ms.\n" 
+              val stats = "Number of requests (total/completed/timeout/failures):" + currNumRequests.longValue() + "/" + numCompletedPredictions.longValue() + "/"
+                  numTimeouts.longValue() + "/" + numFailures.longValue() + ".\n" +
+                  "Average prediction time:" + ((totalTime.doubleValue()*1e-6) / numCompletedPredictions.longValue()) + " ms.\n" 
               complete(StatusCodes.OK, stats)
             }
           }
