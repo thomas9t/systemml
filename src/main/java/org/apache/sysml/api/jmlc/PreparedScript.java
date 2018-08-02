@@ -433,7 +433,7 @@ public class PreparedScript implements ConfigurableAPI
 		
 		//core execute runtime program
 		_prog.execute(ec);
-		
+
 		//cleanup unnecessary outputs
 		_vars.removeAllNotIn(_outVarnames);
 		
@@ -441,13 +441,13 @@ public class PreparedScript implements ConfigurableAPI
 		ResultVariables rvars = new ResultVariables();
 		for( String ovar : _outVarnames ) {
 			Data tmpVar = _vars.get(ovar);
-			if( tmpVar != null )
+			if( tmpVar != null ) {
 				rvars.addResult(ovar, tmpVar);
+			}
 		}
 		
 		//clear thread-local configurations
 		ConfigurationManager.clearLocalConfigs();
-
 		return rvars;
 	}
 	

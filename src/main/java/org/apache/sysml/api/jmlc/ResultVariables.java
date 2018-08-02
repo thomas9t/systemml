@@ -84,12 +84,12 @@ public class ResultVariables
 		Data dat = _out.get(varname);
 		if( dat == null )
 			throw new DMLException("Non-existent output variable: "+varname);
-		
-		//basic checks for data type	
+
+		//basic checks for data type
 		if( !(dat instanceof MatrixObject) )
 			throw new DMLException("Expected matrix result '"+varname+"' not a matrix.");
 		
-		//convert output matrix to double array	
+		//convert output matrix to double array
 		MatrixObject mo = (MatrixObject)dat;
 		MatrixBlock mb = mo.acquireRead();
 		mo.release();

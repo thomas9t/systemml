@@ -18,6 +18,9 @@
  */
 package org.apache.sysml.api.ml.serving
 
+import util.Properties
+import java.io.InputStream
+
 import scala.concurrent.{ExecutionContext, Future}
 import akka.http.scaladsl.server.{Route, StandardRoute}
 import akka.http.scaladsl.server.Directives._
@@ -26,26 +29,48 @@ import akka.http.scaladsl.Http
 import akka.actor.ActorSystem
 import akka.stream.ActorMaterializer
 import com.typesafe.config.ConfigFactory
-import org.apache.commons.cli.{PosixParser, CommandLineParser, CommandLine}
+import org.apache.commons.cli.{CommandLine, CommandLineParser, PosixParser}
+
 import scala.concurrent.duration._
 import java.util.HashMap
+
 import akka.http.scaladsl.marshallers.sprayjson.SprayJsonSupport
 import spray.json._
 import java.util.concurrent.atomic.LongAdder
+
 import scala.concurrent.{Await, Future, future}
 
-// format: can be file, binary, csv, ijv, jpeg, ...
-case class PredictionRequest(model:String, inputs:String, format:String, num_input:Option[Int])
-case class Model(model:String, path:String)
-case class PredictionResponse(response:String, format:String)
+import org.apache.sysml.runtime.util.DataConverter
+import org.apache.sysml.runtime.matrix.data.MatrixBlock
+import org.apache.sysml.parser.DataExpression
+import org.apache.sysml.runtime.io.IOUtilFunctions
+import org.apache.sysml.api.jmlc.Connection
+import org.apache.sysml.api.jmlc.PreparedScript
 
-trait PredictionJsonProtocol extends SprayJsonSupport  with DefaultJsonProtocol {
-  implicit val predictionRequestFormat = jsonFormat4(PredictionRequest)
-  implicit val predictionResponseFormat = jsonFormat2(PredictionResponse)
+// format: can be file, binary, csv, ijv, jpeg, ...
+
+case class PredictionRequestExternal(name: String, data: String, format: String, rows: Int, cols: Int)
+case class PredictionResponseExternal(response: String, format: String)
+
+case class AddModelRequest(name: String, dml: String, inputVarName: String,
+                           outputVarName: String, weights: Map[String, Map[String, String]])
+
+case class Model(name: String, script: PreparedScript, inputVarName: String, outputVarName: String)
+case class PredictionRequest(data : MatrixBlock, modelName : String, requestSize : Int)
+
+case class PredictionResponse(response: MatrixBlock)
+
+trait PredictionJsonProtocol extends SprayJsonSupport with DefaultJsonProtocol {
+    implicit val predictionRequestExternalFormat = jsonFormat5(PredictionRequestExternal)
+    implicit val predictionResponseExternalFormat = jsonFormat2(PredictionResponseExternal)
+}
+
+trait AddModelJsonProtocol extends SprayJsonSupport with DefaultJsonProtocol {
+    implicit val AddModelRequetFormat = jsonFormat5(AddModelRequest)
 }
 
 class PredictionService {
-  
+
 }
 
 /*
@@ -98,161 +123,229 @@ curl -XPOST -H "Content-Type:application/json" -d '{ "inputs":"1,2,3", "format":
 curl -u admin -XGET localhost:9000/shutdown
 
  */
-object PredictionService extends PredictionJsonProtocol {
-  // val LOG = LogFactory.getLog(classOf[PredictionService].getName())
-  implicit val system = ActorSystem("systemml-prediction-service")
-  implicit val materializer = ActorMaterializer()
-  implicit val executionContext = system.dispatcher
-  implicit val timeout = akka.util.Timeout(10 seconds)
-  val userPassword = new HashMap[String, String]()
-  var bindingFuture: Future[Http.ServerBinding] = null
-  var scheduler:Scheduler = null
-  
-  def getCommandLineOptions():org.apache.commons.cli.Options = {
-    val hostOption = new org.apache.commons.cli.Option("ip", true, "IP address")
-    val portOption = new org.apache.commons.cli.Option("port", true, "Port number")
-    val numRequestOption = new org.apache.commons.cli.Option("max_requests", true, "Maximum number of requests")
-    val timeoutOption = new org.apache.commons.cli.Option("timeout", true, "Timeout in milliseconds")
-    val passwdOption = new org.apache.commons.cli.Option("admin_password", true, "Admin password. Default: admin")
-    val helpOption = new org.apache.commons.cli.Option("help", false, "Show usage message")
-    val maxSizeOption = new org.apache.commons.cli.Option("max_bytes", true, "Maximum size of request in bytes")
-    
-    // Only port is required option
-    portOption.setRequired(true)
-    
-    return new org.apache.commons.cli.Options()
+object PredictionService extends PredictionJsonProtocol with AddModelJsonProtocol {
+    // val LOG = LogFactory.getLog(classOf[PredictionService].getName())
+    implicit val system = ActorSystem("systemml-prediction-service")
+    implicit val materializer = ActorMaterializer()
+    implicit val executionContext = system.dispatcher
+    implicit val timeout = akka.util.Timeout(10 seconds)
+    val userPassword = new HashMap[String, String]()
+    var bindingFuture: Future[Http.ServerBinding] = null
+    var scheduler: Scheduler = null
+    val conn = new Connection()
+
+    def getCommandLineOptions(): org.apache.commons.cli.Options = {
+        val hostOption = new org.apache.commons.cli.Option("ip", true, "IP address")
+        val portOption = new org.apache.commons.cli.Option("port", true, "Port number")
+        val numRequestOption = new org.apache.commons.cli.Option("max_requests", true, "Maximum number of requests")
+        val timeoutOption = new org.apache.commons.cli.Option("timeout", true, "Timeout in milliseconds")
+        val passwdOption = new org.apache.commons.cli.Option("admin_password", true, "Admin password. Default: admin")
+        val helpOption = new org.apache.commons.cli.Option("help", false, "Show usage message")
+        val maxSizeOption = new org.apache.commons.cli.Option("max_bytes", true, "Maximum size of request in bytes")
+
+        // Only port is required option
+        portOption.setRequired(true)
+
+        return new org.apache.commons.cli.Options()
           .addOption(hostOption).addOption(portOption).addOption(numRequestOption)
           .addOption(passwdOption).addOption(timeoutOption).addOption(helpOption).addOption(maxSizeOption)
-  }
-  
-  def main(args: Array[String]): Unit = {
-    // Parse commandline variables:
-    val options = getCommandLineOptions
-		val line = new PosixParser().parse(getCommandLineOptions, args);
-		if(line.hasOption("help")) {
-				new org.apache.commons.cli.HelpFormatter().printHelp( "systemml-prediction-service", options )
-				return
-		}
-    userPassword.put("admin", line.getOptionValue("admin_password", "admin"))
-    val currNumRequests = new LongAdder
-    val maxNumRequests = if(line.hasOption("max_requests")) line.getOptionValue("max_requests").toLong else Long.MaxValue
-    val timeout = if(line.hasOption("timeout"))  Duration(line.getOptionValue("timeout").toLong, MILLISECONDS) else Duration.Inf 
-    val sizeDirective = if(line.hasOption("max_bytes")) withSizeLimit(line.getOptionValue("max_bytes").toLong) else withoutSizeLimit 
-    
-    // Initialize statistics counters
-    val numTimeouts = new LongAdder
-    val numFailures = new LongAdder
-    val totalTime = new LongAdder
-    val numCompletedPredictions = new LongAdder
-    
-    // For now the models need to be loaded every time. TODO: pass the local to serialized models via commandline 
-    val models = new HashMap[String, Model]
-    models.put("test", new Model("test", "test-path"))
-    
-    // TODO: Set the scheduler using factory
-    scheduler = new NoBatching(timeout)
-    scheduler.addModel(models.get("test"))
-    val gpus = null
-    val numCores = 1
-    val maxMemory = Runtime.getRuntime().totalMemory()
-    scheduler.start(numCores, maxMemory, gpus)
-    
-    // Define unsecured routes: /predict and /health
-    val unsecuredRoutes = {
-      path("predict") {
-        post {
-          validate(currNumRequests.longValue() < maxNumRequests, "The prediction server received too many requests. Ignoring the current request.") {
-            entity(as[PredictionRequest]) { request =>
-              validate(models.containsKey(request.model), "The model is not available.") {
-                try {
-                  currNumRequests.increment()
-                  val start = System.nanoTime()
-                  val response = Await.result(scheduler.enqueue(request, models.get(request.model)), timeout)
-                  totalTime.add(System.nanoTime()-start)
-                  numCompletedPredictions.increment()
-                  complete(StatusCodes.OK, response)
-                } catch {
-                  case e:scala.concurrent.TimeoutException => {
-                    numTimeouts.increment()
-                    complete(StatusCodes.RequestTimeout, "Timeout occured")
-                  }
-                  case e:Exception => {
-                    numFailures.increment()
-                    e.printStackTrace()
-                    complete(StatusCodes.InternalServerError, "Exception occured while executing the prediction request:" + e.getMessage)  
-                  }
-                } finally {
-                  currNumRequests.decrement()
+    }
+
+    def main(args: Array[String]): Unit = {
+        // Parse commandline variables:
+        val options = getCommandLineOptions
+        val line = new PosixParser().parse(getCommandLineOptions, args);
+        if (line.hasOption("help")) {
+            new org.apache.commons.cli.HelpFormatter().printHelp("systemml-prediction-service", options)
+            return
+        }
+        userPassword.put("admin", line.getOptionValue("admin_password", "admin"))
+        val currNumRequests = new LongAdder
+        val maxNumRequests = if (line.hasOption("max_requests")) line.getOptionValue("max_requests").toLong else Long.MaxValue
+        val timeout = if (line.hasOption("timeout")) Duration(line.getOptionValue("timeout").toLong, MILLISECONDS) else 100.seconds
+        val sizeDirective = if (line.hasOption("max_bytes")) withSizeLimit(line.getOptionValue("max_bytes").toLong) else withoutSizeLimit
+
+        // Initialize statistics counters
+        val numTimeouts = new LongAdder
+        val numFailures = new LongAdder
+        val totalTime = new LongAdder
+        val numCompletedPredictions = new LongAdder
+
+        // For now the models need to be loaded every time. TODO: pass the local to serialized models via commandline
+        var models = Map[String, Model]()
+
+        // TODO: Set the scheduler using factory
+        //scheduler = new NoBatching(timeout)
+        scheduler = new BasicBatchingScheduler(100.seconds)
+        val gpus = null
+        val numCores = 1
+        val maxMemory = Runtime.getRuntime().totalMemory()
+        scheduler.start(numCores, maxMemory, gpus)
+
+        // Define unsecured routes: /predict and /health
+        val unsecuredRoutes = {
+            path("predict") {
+                withoutRequestTimeout {
+                    post {
+                        validate(currNumRequests.longValue() < maxNumRequests, "The prediction server received too many requests. Ignoring the current request.") {
+                            entity(as[PredictionRequestExternal]) { request =>
+                                validate(models.contains(request.name), "The model is not available.") {
+                                    try {
+                                        println("PREDICTION REQUEST RECEIVED FOR " + request.name)
+                                        currNumRequests.increment()
+                                        val start = System.nanoTime()
+                                        val response = Await.result(
+                                            scheduler.enqueue(
+                                                processPredictionRequest(request), models(request.name)), timeout)
+                                        totalTime.add(System.nanoTime() - start)
+
+                                        numCompletedPredictions.increment()
+                                        complete(StatusCodes.OK, processPredictionResponse(response, "NOT IMPLEMENTED"))
+                                    } catch {
+                                        case e: scala.concurrent.TimeoutException => {
+                                            numTimeouts.increment()
+                                            complete(StatusCodes.RequestTimeout, "Timeout occured")
+                                        }
+                                        case e: Exception => {
+                                            numFailures.increment()
+                                            e.printStackTrace()
+                                            val msg = "Exception occured while executing the prediction request:"
+                                            complete(StatusCodes.InternalServerError, msg + e.getMessage)
+                                        }
+                                    } finally {
+                                        currNumRequests.decrement()
+                                    }
+                                }
+                            }
+                        }
+                    }
                 }
-              }
+            } ~
+            path("register-model") {
+                post {
+                    entity(as[AddModelRequest]) { request =>
+                        validate(!models.contains(request.name), "The model is already loaded") {
+                            println("REQUEST: " + request)
+                            try {
+
+                                val inputs = request.weights.keys.toArray ++ Array(request.inputVarName)
+                                // compile the model's DML script
+                                val script: PreparedScript = conn.prepareScript(
+                                    request.dml, inputs, Array(request.outputVarName))
+
+                                // register the weights with the model
+                                for ((name, matMap) <- request.weights) {
+                                    val rows = matMap("rows").toInt
+                                    val cols = matMap("cols").toInt
+                                    val format = matMap("format")
+                                    val data = matMap("data")
+                                    script.setMatrix(
+                                        name, processMatrixInput(data, rows, cols, format), true)
+                                }
+                                // now register the created model
+                                val model = Model(request.name, script, request.inputVarName, request.outputVarName)
+                                models += (request.name -> model)
+                                scheduler.addModel(model)
+                                complete(StatusCodes.OK)
+                            } catch {
+                                case e: Exception => {
+                                    numFailures.increment()
+                                    e.printStackTrace()
+                                    complete(StatusCodes.InternalServerError, "Exception occured while executing the prediction request:" + e.getMessage)
+                                }
+                            }
+                        }
+                    }
+                }
             }
-          }
         }
-      }
-    }
-    
-    // For administration: This can be later extended for supporting multiple users.
-    val securedRoutes = {
-      authenticateBasicAsync(realm = "secure site", userAuthenticate) {
-        user =>
-          path("shutdown") {
-            get {
-              shutdownService(user, scheduler)
+
+        // For administration: This can be later extended for supporting multiple users.
+        val securedRoutes = {
+            authenticateBasicAsync(realm = "secure site", userAuthenticate) {
+                user =>
+                    path("shutdown") {
+                        get {
+                            shutdownService(user, scheduler)
+                        }
+                    } ~
+                      path("health") {
+                          get {
+                              val stats = "Number of requests (total/completed/timeout/failures):" + currNumRequests.longValue() + "/" + numCompletedPredictions.longValue() + "/"
+                              numTimeouts.longValue() + "/" + numFailures.longValue() + ".\n" +
+                                "Average prediction time:" + ((totalTime.doubleValue() * 1e-6) / numCompletedPredictions.longValue()) + " ms.\n"
+                              complete(StatusCodes.OK, stats)
+                          }
+                      }
             }
-          } ~
-          path("health") {
-            get {
-              val stats = "Number of requests (total/completed/timeout/failures):" + currNumRequests.longValue() + "/" + numCompletedPredictions.longValue() + "/"
-                  numTimeouts.longValue() + "/" + numFailures.longValue() + ".\n" +
-                  "Average prediction time:" + ((totalTime.doubleValue()*1e-6) / numCompletedPredictions.longValue()) + " ms.\n" 
-              complete(StatusCodes.OK, stats)
-            }
-          }
-      }
-    }
-    
-    bindingFuture = Http().bindAndHandle(
-        sizeDirective { // Both secured and unsecured routes need to respect the size restriction
-          unsecuredRoutes ~ securedRoutes
-        }, 
-      line.getOptionValue("ip", "localhost"), line.getOptionValue("port").toInt)
-    
-    println(s"Prediction Server online.\nPress RETURN to stop...")
-    scala.io.StdIn.readLine()
-    bindingFuture
-      .flatMap(_.unbind())
-      .onComplete(_ ⇒ system.terminate())
-  }
-  
-  def userAuthenticate(credentials: akka.http.scaladsl.server.directives.Credentials): Future[Option[String]] = {
-    credentials match {
-      case p @ akka.http.scaladsl.server.directives.Credentials.Provided(id) =>
-        Future {
-          if(userPassword.containsKey(id) && p.verify(userPassword.get(id))) Some(id)
-          else None
         }
-      case _ => Future.successful(None)
+
+        bindingFuture = Http().bindAndHandle(
+            sizeDirective { // Both secured and unsecured routes need to respect the size restriction
+                unsecuredRoutes ~ securedRoutes
+            },
+            line.getOptionValue("ip", "localhost"), line.getOptionValue("port").toInt)
+
+        println(s"Prediction Server online.\nPress RETURN to stop...")
+        scala.io.StdIn.readLine()
+        bindingFuture
+          .flatMap(_.unbind())
+          .onComplete(_ ⇒ system.terminate())
     }
-  }
-  
-  def shutdownService(user:String, scheduler:Scheduler):StandardRoute = {
-    if(user.equals("admin")) {
-      try {
-        Http().shutdownAllConnectionPools() andThen { case _ => bindingFuture.flatMap(_.unbind()).onComplete(_ ⇒ system.terminate()) }
-        scheduler.shutdown()
-        complete(StatusCodes.OK, "Shutting down the server.")
-      } finally {
-        new Thread(new Runnable { 
-          def run() {
-            Thread.sleep(100) // wait for 100ms to send reply and then kill the prediction JVM so that we don't wait scala.io.StdIn.readLine()
-            System.exit(0)
-          }
-        }).start();
-      }
+
+    def processPredictionResponse(response : PredictionResponse, format : String) : PredictionResponseExternal = {
+        // TODO: Implement other output types...
+        val matAsArray = DataConverter.convertToDoubleMatrix(response.response)
+        PredictionResponseExternal(matAsArray.map{ _.mkString(",") }.mkString(Properties.lineSeparator), "csv")
     }
-    else {
-      complete(StatusCodes.BadRequest, "Only admin can shutdown the service.")
+
+    def processPredictionRequest(request : PredictionRequestExternal) : PredictionRequest = {
+        val mat = processMatrixInput(request.data, request.rows, request.cols, request.format)
+        PredictionRequest(mat, request.name, mat.getNumRows)
     }
-  }
-  
+
+    def processMatrixInput(data : String, rows : Int, cols : Int, format : String) : MatrixBlock = {
+        val result = format match {
+            case "csv" => processTextInput(data, rows, cols, DataExpression.FORMAT_TYPE_VALUE_CSV)
+            case _ => throw new Exception("Only CSV Input currently supported")
+        }
+        result
+    }
+
+    def processTextInput(data : String, rows : Int, cols : Int, format : String) : MatrixBlock = {
+        val is = IOUtilFunctions.toInputStream(data)
+        conn.convertToMatrix(is, rows, cols, format)
+    }
+
+    def userAuthenticate(credentials: akka.http.scaladsl.server.directives.Credentials): Future[Option[String]] = {
+        credentials match {
+            case p@akka.http.scaladsl.server.directives.Credentials.Provided(id) =>
+                Future {
+                    if (userPassword.containsKey(id) && p.verify(userPassword.get(id))) Some(id)
+                    else None
+                }
+            case _ => Future.successful(None)
+        }
+    }
+
+    def shutdownService(user: String, scheduler: Scheduler): StandardRoute = {
+        if (user.equals("admin")) {
+            try {
+                Http().shutdownAllConnectionPools() andThen { case _ => bindingFuture.flatMap(_.unbind()).onComplete(_ ⇒ system.terminate()) }
+                scheduler.shutdown()
+                complete(StatusCodes.OK, "Shutting down the server.")
+            } finally {
+                new Thread(new Runnable {
+                    def run() {
+                        Thread.sleep(100) // wait for 100ms to send reply and then kill the prediction JVM so that we don't wait scala.io.StdIn.readLine()
+                        System.exit(0)
+                    }
+                }).start();
+            }
+        }
+        else {
+            complete(StatusCodes.BadRequest, "Only admin can shutdown the service.")
+        }
+    }
+
 }
