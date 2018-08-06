@@ -55,7 +55,11 @@ case class PredictionResponseExternal(response: String, format: String)
 case class AddModelRequest(name: String, dml: String, inputVarName: String,
                            outputVarName: String, weights: Map[String, Map[String, String]])
 
-case class Model(name: String, script: PreparedScript, inputVarName: String, outputVarName: String)
+case class Model(name: String,
+                 script: PreparedScript,
+                 inputVarName: String,
+                 outputVarName: String,
+                 scriptGpu: PreparedScript = null)
 case class PredictionRequest(data : MatrixBlock, modelName : String, requestSize : Int)
 
 case class PredictionResponse(response: MatrixBlock)
@@ -182,7 +186,7 @@ object PredictionService extends PredictionJsonProtocol with AddModelJsonProtoco
         // TODO: Set the scheduler using factory
         //scheduler = new NoBatching(timeout)
         scheduler = new BasicBatchingScheduler(20.seconds, 8.seconds)
-        val gpus = null
+        val gpus = Array[Int](0)
         val numCores = 1
         val maxMemory = Runtime.getRuntime().totalMemory()
         scheduler.start(numCores, maxMemory, gpus)
@@ -230,25 +234,40 @@ object PredictionService extends PredictionJsonProtocol with AddModelJsonProtoco
                     entity(as[AddModelRequest]) { request =>
                         validate(!models.contains(request.name), "The model is already loaded") {
                             try {
-
                                 val inputs = request.weights.keys.toArray ++ Array(request.inputVarName)
-                                // compile the model's DML script
-                                val script: PreparedScript = conn.prepareScript(
-                                    request.dml, inputs, Array(request.outputVarName))
 
-                                // register the weights with the model
-                                for ((name, matMap) <- request.weights) {
-                                    val rows = matMap("rows").toInt
-                                    val cols = matMap("cols").toInt
-                                    val format = matMap("format")
-                                    val data = matMap("data")
-                                    script.setMatrix(
-                                        name, processMatrixInput(data, rows, cols, format), true)
+                                // compile the model's DML script for execution on CPU - unfortunately this needs
+                                // to be synchronized
+
+                                conn.synchronized {
+                                    conn.setGpu(false)
+                                    conn.setForceGPU(false)
+                                    val scriptCpu = conn.prepareScript(
+                                        request.dml, inputs, Array(request.outputVarName))
+
+                                    conn.setGpu(true);
+                                    conn.setForceGPU(true);
+                                    val scriptGpu = conn.prepareScript(
+                                        request.dml, inputs, Array(request.outputVarName))
+
+                                    // register the weights with the model
+                                    for ((name, matMap) <- request.weights) {
+                                        val rows = matMap("rows").toInt
+                                        val cols = matMap("cols").toInt
+                                        val format = matMap("format")
+                                        val data = matMap("data")
+                                        scriptCpu.setMatrix(
+                                            name, processMatrixInput(data, rows, cols, format), true)
+                                        scriptGpu.setMatrix(
+                                            name, processMatrixInput(data, rows, cols, format), true)
+                                    }
+
+                                    // now register the created model
+                                    val model = Model(
+                                        request.name, scriptCpu, request.inputVarName, request.outputVarName, scriptGpu)
+                                    models += (request.name -> model)
+                                    scheduler.addModel(model)
                                 }
-                                // now register the created model
-                                val model = Model(request.name, script, request.inputVarName, request.outputVarName)
-                                models += (request.name -> model)
-                                scheduler.addModel(model)
                                 complete(StatusCodes.OK)
                             } catch {
                                 case e: Exception => {

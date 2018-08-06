@@ -276,13 +276,13 @@ public class Connection implements Closeable
 		String[] invalidArgs = args.keySet().stream()
 			.filter(k -> k==null || !k.startsWith("$")).toArray(String[]::new);
 		if( invalidArgs.length > 0 )
-			throw new LanguageException("Invalid argument names: "+Arrays.toString(invalidArgs));
+			throw new LanguageException("Invalid argument names: "+ Arrays.toString(invalidArgs));
 		
 		//check for valid names of input and output variables
 		String[] invalidVars = UtilFunctions.asSet(inputs, outputs).stream()
 			.filter(k -> k==null || k.startsWith("$")).toArray(String[]::new);
 		if( invalidVars.length > 0 )
-			throw new LanguageException("Invalid variable names: "+Arrays.toString(invalidVars));
+			throw new LanguageException("Invalid variable names: "+ Arrays.toString(invalidVars));
 		
 		setLocalConfigs();
 		

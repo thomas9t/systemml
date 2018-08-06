@@ -24,8 +24,6 @@ import scala.concurrent.duration._
 import scala.collection.concurrent.Map
 import java.util.concurrent._
 
-import org.apache.hadoop.yarn.server.nodemanager.containermanager.localizer.ResourceLocalizationService
-
 import scala.concurrent.ExecutionContext
 import scala.math.{max, min}
 
@@ -65,8 +63,18 @@ trait JmlcExecutor extends Runnable {
 // one task per GPU
 class GpuJmlcExecutor(gpuNumber: Int, override val scheduler: Scheduler) extends JmlcExecutor {
     def execute(requests: Array[SchedulingRequest]): Array[PredictionResponse] = {
-        // TODO:
-        null
+        var responses = Array[PredictionResponse]()
+        if (requests.length > 0) {
+            println("RUNNING: " + requests(0).model + " ON GPU")
+            val batchedMatrixData = BatchingUtils.batchRequests(requests)
+            val req = requests(0)
+            val script = req.model.scriptGpu
+            script.setMatrix(req.model.inputVarName, batchedMatrixData, false)
+            val res = script.executeScript().getMatrixBlock(req.model.outputVarName)
+            responses = BatchingUtils.unbatchRequests(requests, res)
+            println("DONE RUNNING")
+        }
+        responses
     }
 }
 
@@ -75,7 +83,7 @@ class CpuJmlcExecutor(override val scheduler: Scheduler) extends JmlcExecutor {
     def execute(requests : Array[SchedulingRequest]) : Array[PredictionResponse] = {
         var responses = Array[PredictionResponse]()
         if (requests.length > 0) {
-            println("RUNNING: " + requests(0).model)
+            println("RUNNING: " + requests(0).model + " ON CPU")
             val batchedMatrixData = BatchingUtils.batchRequests(requests)
             val req = requests(0)
             val script = req.model.script
