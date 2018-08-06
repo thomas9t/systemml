@@ -52,6 +52,7 @@ import org.apache.sysml.parser.ParserWrapper;
 import org.apache.sysml.runtime.DMLRuntimeException;
 import org.apache.sysml.runtime.controlprogram.Program;
 import org.apache.sysml.runtime.controlprogram.caching.CacheableData;
+import org.apache.sysml.runtime.instructions.gpu.context.GPUContextPool;
 import org.apache.sysml.runtime.io.FrameReader;
 import org.apache.sysml.runtime.io.FrameReaderFactory;
 import org.apache.sysml.runtime.io.IOUtilFunctions;
@@ -196,6 +197,27 @@ public class Connection implements Closeable
 		DMLScript.STATISTICS = stats || DMLScript.STATISTICS;
 		DMLScript.JMLC_MEM_STATISTICS = stats;
 	}
+
+	/**
+	 * Sets a boolean flag indicating if scripts compiled using this connection should use GPU
+	 *
+	 * @param enable boolean indicating whether GPU should be used
+	 */
+	public void setGpu(boolean enable) { DMLScript.USE_ACCELERATOR = enable; }
+
+	/**
+	 * Sets a boolean flag indicating if GPU enabled operators should -always- be compiled to use GPU
+	 *
+	 * @param enable boolean indicating if GPU should always be used
+	 */
+	public void setForceGPU(boolean enable) { DMLScript.FORCE_ACCELERATOR = enable; }
+
+	/**
+	 * Configures the list of available GPUs to use for this connection.
+	 *
+	 * @param gpuConfig String containing a comma separated list of GPU devices or -1 to use all GPUs available
+	 */
+	public void setAvailableGpu(String gpuConfig) { GPUContextPool.AVAILABLE_GPUS = gpuConfig; }
 	
 	/**
 	 * Prepares (precompiles) a script and registers input and output variables.
@@ -301,8 +323,9 @@ public class Connection implements Closeable
 			throw new DMLException(ex);
 		}
 		
-		//return newly create precompiled script 
-		return new PreparedScript(rtprog, inputs, outputs, _dmlconf, _cconf);
+		PreparedScript rtscript = new PreparedScript(rtprog, inputs, outputs, _dmlconf, _cconf);
+		rtscript.setUseGpu(DMLScript.USE_ACCELERATOR || DMLScript.FORCE_ACCELERATOR);
+		return rtscript;
 	}
 	
 	/**

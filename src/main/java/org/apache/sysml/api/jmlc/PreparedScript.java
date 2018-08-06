@@ -30,6 +30,7 @@ import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
 import org.apache.sysml.api.ConfigurableAPI;
 import org.apache.sysml.api.DMLException;
+import org.apache.sysml.api.DMLScript;
 import org.apache.sysml.conf.CompilerConfig;
 import org.apache.sysml.conf.ConfigurationManager;
 import org.apache.sysml.conf.DMLConfig;
@@ -52,6 +53,9 @@ import org.apache.sysml.runtime.instructions.cp.DoubleObject;
 import org.apache.sysml.runtime.instructions.cp.IntObject;
 import org.apache.sysml.runtime.instructions.cp.ScalarObject;
 import org.apache.sysml.runtime.instructions.cp.StringObject;
+import org.apache.sysml.runtime.instructions.gpu.context.GPUContext;
+import org.apache.sysml.runtime.instructions.gpu.context.GPUContextPool;
+import org.apache.sysml.runtime.instructions.gpu.context.GPUObject;
 import org.apache.sysml.runtime.matrix.MatrixCharacteristics;
 import org.apache.sysml.runtime.matrix.MetaDataFormat;
 import org.apache.sysml.runtime.matrix.data.FrameBlock;
@@ -60,6 +64,7 @@ import org.apache.sysml.runtime.matrix.data.MatrixBlock;
 import org.apache.sysml.runtime.matrix.data.OutputInfo;
 import org.apache.sysml.runtime.util.DataConverter;
 import org.apache.sysml.utils.Explain;
+import org.apache.sysml.utils.NativeHelper;
 import org.apache.sysml.utils.Statistics;
 
 /**
@@ -79,6 +84,8 @@ public class PreparedScript implements ConfigurableAPI
 	private final LocalVariableMap _vars;
 	private final DMLConfig _dmlconf;
 	private final CompilerConfig _cconf;
+
+	private boolean useGpu = false;
 	
 	private PreparedScript(PreparedScript that) {
 		//shallow copy, except for a separate symbol table
@@ -158,6 +165,14 @@ public class PreparedScript implements ConfigurableAPI
 	public CompilerConfig getCompilerConfig() {
 		return _cconf;
 	}
+
+	/**
+	 * Boolean flag indicating if this script requires the GPU. Must be set to "true" if script was compiled
+	 * with GPU
+	 *
+	 * @param enable
+	 */
+	public void setUseGpu(boolean enable) { useGpu = enable; }
 	
 	/**
 	 * Binds a scalar boolean to a registered input variable.
@@ -423,16 +438,59 @@ public class PreparedScript implements ConfigurableAPI
 	public ResultVariables executeScript() {
 		//add reused variables
 		_vars.putAll(_inVarReuse);
-		
+
+		DMLScript.PRINT_GPU_MEMORY_INFO = _dmlconf.getBooleanValue(DMLConfig.PRINT_GPU_MEMORY_INFO);
+		DMLScript.SYNCHRONIZE_GPU = _dmlconf.getBooleanValue(DMLConfig.SYNCHRONIZE_GPU);
+		DMLScript.EAGER_CUDA_FREE = _dmlconf.getBooleanValue(DMLConfig.EAGER_CUDA_FREE);
+		NativeHelper.initialize(_dmlconf.getTextValue(DMLConfig.NATIVE_BLAS_DIR), _dmlconf.getTextValue(DMLConfig.NATIVE_BLAS).trim());
+
+		if(DMLScript.USE_ACCELERATOR) {
+			DMLScript.FLOATING_POINT_PRECISION = _dmlconf.getTextValue(DMLConfig.FLOATING_POINT_PRECISION);
+			org.apache.sysml.runtime.matrix.data.LibMatrixCUDA.resetFloatingPointPrecision();
+		}
+
 		//set thread-local configurations
 		ConfigurationManager.setLocalConfig(_dmlconf);
 		ConfigurationManager.setLocalConfig(_cconf);
-		
+
 		//create and populate execution context
 		ExecutionContext ec = ExecutionContextFactory.createContext(_vars, _prog);
-		
+		if (useGpu && ec != null) {
+			List<GPUContext> gCtxs = GPUContextPool.reserveAllGPUContexts();
+			if (gCtxs == null) {
+				throw new DMLRuntimeException(
+						"GPU : Could not create GPUContext, either no GPU or all GPUs currently in use");
+			}
+			gCtxs.get(0).initializeThread();
+			ec.setGPUContexts(gCtxs);
+		}
+
 		//core execute runtime program
 		_prog.execute(ec);
+
+		if (useGpu && !ec.getGPUContexts().isEmpty()) {
+			// -----------------------------------------------------------------
+			// The below code pulls the output variables on the GPU to the host. This is required especially when:
+			// The output variable was generated as part of a MLContext session with GPU enabled
+			// and was passed to another MLContext with GPU disabled
+			// The above scenario occurs in our gpu test suite (eg: BatchNormTest).
+			for (String outVar : _outVarnames) {
+				Data data = ec.getVariable(outVar);
+				if (data instanceof MatrixObject) {
+					for (GPUContext gCtx : ec.getGPUContexts()) {
+						GPUObject gpuObj = ((MatrixObject) data).getGPUObject(gCtx);
+						if (gpuObj != null && gpuObj.isDirty()) {
+							gpuObj.acquireHostRead(null);
+						}
+					}
+				}
+			}
+			// -----------------------------------------------------------------
+			for (GPUContext gCtx : ec.getGPUContexts()) {
+				gCtx.clearTemporaryMemory();
+			}
+			GPUContextPool.freeAllGPUContexts();
+		}
 
 		//cleanup unnecessary outputs
 		_vars.removeAllNotIn(_outVarnames);
