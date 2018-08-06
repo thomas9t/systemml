@@ -128,7 +128,7 @@ object PredictionService extends PredictionJsonProtocol with AddModelJsonProtoco
     implicit val system = ActorSystem("systemml-prediction-service")
     implicit val materializer = ActorMaterializer()
     implicit val executionContext = system.dispatcher
-    implicit val timeout = akka.util.Timeout(10 seconds)
+    implicit val timeout = akka.util.Timeout(20.seconds)
     val userPassword = new HashMap[String, String]()
     var bindingFuture: Future[Http.ServerBinding] = null
     var scheduler: Scheduler = null
@@ -161,9 +161,14 @@ object PredictionService extends PredictionJsonProtocol with AddModelJsonProtoco
         }
         userPassword.put("admin", line.getOptionValue("admin_password", "admin"))
         val currNumRequests = new LongAdder
-        val maxNumRequests = if (line.hasOption("max_requests")) line.getOptionValue("max_requests").toLong else Long.MaxValue
-        val timeout = if (line.hasOption("timeout")) Duration(line.getOptionValue("timeout").toLong, MILLISECONDS) else 100.seconds
-        val sizeDirective = if (line.hasOption("max_bytes")) withSizeLimit(line.getOptionValue("max_bytes").toLong) else withoutSizeLimit
+        val maxNumRequests = if (line.hasOption("max_requests"))
+            line.getOptionValue("max_requests").toLong else Long.MaxValue
+        val timeout = if (line.hasOption("timeout"))
+            Duration(line.getOptionValue("timeout").toLong, MILLISECONDS) else 20.seconds
+        val sizeDirective = if (line.hasOption("max_bytes"))
+            withSizeLimit(line.getOptionValue("max_bytes").toLong) else withoutSizeLimit
+        val latencyObjective = if (line.hasOption("latency_objective"))
+            Duration(line.getOptionValue("latency_objective").toLong, MILLISECONDS) else 4.seconds
 
         // Initialize statistics counters
         val numTimeouts = new LongAdder
@@ -176,7 +181,7 @@ object PredictionService extends PredictionJsonProtocol with AddModelJsonProtoco
 
         // TODO: Set the scheduler using factory
         //scheduler = new NoBatching(timeout)
-        scheduler = new BasicBatchingScheduler(100.seconds)
+        scheduler = new BasicBatchingScheduler(20.seconds, 8.seconds)
         val gpus = null
         val numCores = 1
         val maxMemory = Runtime.getRuntime().totalMemory()
@@ -191,12 +196,11 @@ object PredictionService extends PredictionJsonProtocol with AddModelJsonProtoco
                             entity(as[PredictionRequestExternal]) { request =>
                                 validate(models.contains(request.name), "The model is not available.") {
                                     try {
-                                        println("PREDICTION REQUEST RECEIVED FOR " + request.name)
                                         currNumRequests.increment()
                                         val start = System.nanoTime()
-                                        val response = Await.result(
-                                            scheduler.enqueue(
-                                                processPredictionRequest(request), models(request.name)), timeout)
+                                        val processedRequest = processPredictionRequest(request)
+                                        val schedulerResult = scheduler.enqueue(processedRequest, models(request.name))
+                                        val response = Await.result(schedulerResult, timeout)
                                         totalTime.add(System.nanoTime() - start)
 
                                         numCompletedPredictions.increment()
@@ -225,7 +229,6 @@ object PredictionService extends PredictionJsonProtocol with AddModelJsonProtoco
                 post {
                     entity(as[AddModelRequest]) { request =>
                         validate(!models.contains(request.name), "The model is already loaded") {
-                            println("REQUEST: " + request)
                             try {
 
                                 val inputs = request.weights.keys.toArray ++ Array(request.inputVarName)
@@ -295,8 +298,14 @@ object PredictionService extends PredictionJsonProtocol with AddModelJsonProtoco
 
     def processPredictionResponse(response : PredictionResponse, format : String) : PredictionResponseExternal = {
         // TODO: Implement other output types...
-        val matAsArray = DataConverter.convertToDoubleMatrix(response.response)
-        PredictionResponseExternal(matAsArray.map{ _.mkString(",") }.mkString(Properties.lineSeparator), "csv")
+        if (response.response != null) {
+            val matAsArray = DataConverter.convertToDoubleMatrix(response.response)
+            PredictionResponseExternal(matAsArray.map {
+                _.mkString(",")
+            }.mkString(Properties.lineSeparator), "csv")
+        } else {
+            PredictionResponseExternal("ERROR", "ERROR")
+        }
     }
 
     def processPredictionRequest(request : PredictionRequestExternal) : PredictionRequest = {
