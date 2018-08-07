@@ -102,6 +102,7 @@ public class GPUContextPool {
 
 			// Initialize the list of devices & the pool of GPUContexts
 			for (int i : listOfGPUs) {
+				System.out.println("GPU: " + i);
 				cudaDeviceProp properties = new cudaDeviceProp();
 				cudaGetDeviceProperties(properties, i);
 				deviceProperties[i] = properties;

@@ -186,7 +186,7 @@ object PredictionService extends PredictionJsonProtocol with AddModelJsonProtoco
         // TODO: Set the scheduler using factory
         //scheduler = new NoBatching(timeout)
         scheduler = new BasicBatchingScheduler(20.seconds, 8.seconds)
-        val gpus = Array[Int](0)
+        val gpus = "-1"
         val numCores = 1
         val maxMemory = Runtime.getRuntime().totalMemory()
         scheduler.start(numCores, maxMemory, gpus)

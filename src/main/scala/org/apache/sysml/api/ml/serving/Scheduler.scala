@@ -18,11 +18,11 @@
  */
 package org.apache.sysml.api.ml.serving
 
-import scala.util.control.Breaks._
 import scala.concurrent.Future
 import scala.concurrent.duration._
-import scala.collection.concurrent.Map
 import java.util.concurrent._
+
+import org.apache.sysml.runtime.instructions.gpu.context.GPUContextPool
 
 import scala.concurrent.ExecutionContext
 import scala.math.{max, min}
@@ -61,18 +61,17 @@ trait JmlcExecutor extends Runnable {
 }
 
 // one task per GPU
-class GpuJmlcExecutor(gpuNumber: Int, override val scheduler: Scheduler) extends JmlcExecutor {
+class GpuJmlcExecutor(override val scheduler: Scheduler) extends JmlcExecutor {
     def execute(requests: Array[SchedulingRequest]): Array[PredictionResponse] = {
         var responses = Array[PredictionResponse]()
         if (requests.length > 0) {
-            println("RUNNING: " + requests(0).model + " ON GPU")
             val batchedMatrixData = BatchingUtils.batchRequests(requests)
             val req = requests(0)
             val script = req.model.scriptGpu
             script.setMatrix(req.model.inputVarName, batchedMatrixData, false)
-            val res = script.executeScript().getMatrixBlock(req.model.outputVarName)
+            val stret = script.executeScript()
+            val res = stret.getMatrixBlock(req.model.outputVarName)
             responses = BatchingUtils.unbatchRequests(requests, res)
-            println("DONE RUNNING")
         }
         responses
     }
@@ -83,14 +82,12 @@ class CpuJmlcExecutor(override val scheduler: Scheduler) extends JmlcExecutor {
     def execute(requests : Array[SchedulingRequest]) : Array[PredictionResponse] = {
         var responses = Array[PredictionResponse]()
         if (requests.length > 0) {
-            println("RUNNING: " + requests(0).model + " ON CPU")
             val batchedMatrixData = BatchingUtils.batchRequests(requests)
             val req = requests(0)
             val script = req.model.script
             script.setMatrix(req.model.inputVarName, batchedMatrixData, false)
             val res = script.executeScript().getMatrixBlock(req.model.outputVarName)
             responses = BatchingUtils.unbatchRequests(requests, res)
-            println("DONE RUNNING")
         }
         responses
     }
@@ -100,14 +97,17 @@ trait Scheduler {
     var executorService: ExecutorService = _
     implicit val ec : ExecutionContext = ExecutionContext.fromExecutor(Executors.newFixedThreadPool(10000))
 
-    def start(numCores: Int, cpuMemoryBudgetInBytes: Long, gpus: Array[Int]): Unit = {
-        val numGpus = if (gpus == null) 0 else gpus.length
+    def start(numCores: Int, cpuMemoryBudgetInBytes: Long, gpus: String): Unit = {
+        val numGpus = if (gpus == null) 0 else gpus.split(",").length
+        if (gpus != null)
+            GPUContextPool.AVAILABLE_GPUS = gpus
+
         executorService = Executors.newFixedThreadPool(numCores + numGpus)
         for (i <- 0 until numCores) {
             executorService.submit(new CpuJmlcExecutor(this))
         }
         for (i <- 0 until numGpus) {
-            executorService.submit(new GpuJmlcExecutor(gpus(i), this))
+            executorService.submit(new GpuJmlcExecutor(this))
         }
     }
 
@@ -172,7 +172,6 @@ class BasicBatchingScheduler(override val timeout: Duration,
                 modelBatchSizes.put(model,
                     if (latency < latencyObjective.toNanos) prevSize+2 else max((prevSize*.90).toInt, 1))
             })
-            println("UPDATING BATCH SIZE FOR: " + model + " => " + modelBatchSizes.get(model))
         }
         //RLS.enqueueExample(batchSize, latency)
     }
@@ -186,14 +185,11 @@ class BasicBatchingScheduler(override val timeout: Duration,
                     val schedulableModels = getSchedulableModels()
                     if (schedulableModels.nonEmpty) {
                         val (nextModel, nextBatchSize) = getNextModelAndBatchSize(schedulableModels)
-                        println("SCHEDULING: " + nextModel + " => " + nextBatchSize)
                         for (_ <- 0 until nextBatchSize) {
-                            println("POLLING")
                             val next = modelQueues.get(nextModel).poll()
                             assert(next != null, "Something is wrong")
                             ret :+= next
                         }
-                        println("DONE WITH SCHEDULING")
                     }
                 }
             }
