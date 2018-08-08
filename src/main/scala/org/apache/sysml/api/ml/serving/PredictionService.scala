@@ -18,18 +18,16 @@
  */
 package org.apache.sysml.api.ml.serving
 
-import util.Properties
-import java.io.InputStream
+import java.io.File
 
-import scala.concurrent.{ExecutionContext, Future}
-import akka.http.scaladsl.server.{Route, StandardRoute}
+import util.Properties
+import akka.http.scaladsl.server.StandardRoute
 import akka.http.scaladsl.server.Directives._
-import akka.http.scaladsl.model.{HttpEntity, StatusCodes}
+import akka.http.scaladsl.model.StatusCodes
 import akka.http.scaladsl.Http
 import akka.actor.ActorSystem
 import akka.stream.ActorMaterializer
-import com.typesafe.config.ConfigFactory
-import org.apache.commons.cli.{CommandLine, CommandLineParser, PosixParser}
+import org.apache.commons.cli.PosixParser
 
 import scala.concurrent.duration._
 import java.util.HashMap
@@ -38,8 +36,7 @@ import akka.http.scaladsl.marshallers.sprayjson.SprayJsonSupport
 import spray.json._
 import java.util.concurrent.atomic.LongAdder
 
-import scala.concurrent.{Await, Future, future}
-
+import scala.concurrent.{Await, Future}
 import org.apache.sysml.runtime.util.DataConverter
 import org.apache.sysml.runtime.matrix.data.MatrixBlock
 import org.apache.sysml.parser.DataExpression
@@ -50,10 +47,10 @@ import org.apache.sysml.api.jmlc.PreparedScript
 // format: can be file, binary, csv, ijv, jpeg, ...
 
 case class PredictionRequestExternal(name: String, data: String, format: String, rows: Int, cols: Int)
-case class PredictionResponseExternal(response: String, format: String)
+case class PredictionResponseExternal(response: String, format: String, batchSize: Int, execLatency: Long)
 
 case class AddModelRequest(name: String, dml: String, inputVarName: String,
-                           outputVarName: String, weights: Map[String, Map[String, String]])
+                           outputVarName: String, weightsDir: String)
 
 case class Model(name: String,
                  script: PreparedScript,
@@ -62,11 +59,11 @@ case class Model(name: String,
                  scriptGpu: PreparedScript = null)
 case class PredictionRequest(data : MatrixBlock, modelName : String, requestSize : Int)
 
-case class PredictionResponse(response: MatrixBlock)
+case class PredictionResponse(response: MatrixBlock, batchSize: Int, var execLatency: Long = -1)
 
 trait PredictionJsonProtocol extends SprayJsonSupport with DefaultJsonProtocol {
     implicit val predictionRequestExternalFormat = jsonFormat5(PredictionRequestExternal)
-    implicit val predictionResponseExternalFormat = jsonFormat2(PredictionResponseExternal)
+    implicit val predictionResponseExternalFormat = jsonFormat4(PredictionResponseExternal)
 }
 
 trait AddModelJsonProtocol extends SprayJsonSupport with DefaultJsonProtocol {
@@ -132,7 +129,7 @@ object PredictionService extends PredictionJsonProtocol with AddModelJsonProtoco
     implicit val system = ActorSystem("systemml-prediction-service")
     implicit val materializer = ActorMaterializer()
     implicit val executionContext = system.dispatcher
-    implicit val timeout = akka.util.Timeout(20.seconds)
+    implicit val timeout = akka.util.Timeout(300.seconds)
     val userPassword = new HashMap[String, String]()
     var bindingFuture: Future[Http.ServerBinding] = null
     var scheduler: Scheduler = null
@@ -168,11 +165,11 @@ object PredictionService extends PredictionJsonProtocol with AddModelJsonProtoco
         val maxNumRequests = if (line.hasOption("max_requests"))
             line.getOptionValue("max_requests").toLong else Long.MaxValue
         val timeout = if (line.hasOption("timeout"))
-            Duration(line.getOptionValue("timeout").toLong, MILLISECONDS) else 20.seconds
+            Duration(line.getOptionValue("timeout").toLong, MILLISECONDS) else 300.seconds
         val sizeDirective = if (line.hasOption("max_bytes"))
             withSizeLimit(line.getOptionValue("max_bytes").toLong) else withoutSizeLimit
         val latencyObjective = if (line.hasOption("latency_objective"))
-            Duration(line.getOptionValue("latency_objective").toLong, MILLISECONDS) else 4.seconds
+            Duration(line.getOptionValue("latency_objective").toLong, MILLISECONDS) else 15.seconds
 
         // Initialize statistics counters
         val numTimeouts = new LongAdder
@@ -185,8 +182,8 @@ object PredictionService extends PredictionJsonProtocol with AddModelJsonProtoco
 
         // TODO: Set the scheduler using factory
         //scheduler = new NoBatching(timeout)
-        scheduler = new BasicBatchingScheduler(20.seconds, 8.seconds)
-        val gpus = "-1"
+        scheduler = new BasicBatchingScheduler(300.seconds, 10.seconds)
+        val gpus = null
         val numCores = 1
         val maxMemory = Runtime.getRuntime().totalMemory()
         scheduler.start(numCores, maxMemory, gpus)
@@ -234,33 +231,24 @@ object PredictionService extends PredictionJsonProtocol with AddModelJsonProtoco
                     entity(as[AddModelRequest]) { request =>
                         validate(!models.contains(request.name), "The model is already loaded") {
                             try {
-                                val inputs = request.weights.keys.toArray ++ Array(request.inputVarName)
+                                val weightsMap = processWeights(request.weightsDir)
+                                val inputs = weightsMap.keys.toArray ++ Array[String](request.inputVarName)
 
                                 // compile the model's DML script for execution on CPU - unfortunately this needs
                                 // to be synchronized
-
                                 conn.synchronized {
                                     conn.setGpu(false)
                                     conn.setForceGPU(false)
                                     val scriptCpu = conn.prepareScript(
                                         request.dml, inputs, Array(request.outputVarName))
 
-                                    conn.setGpu(true);
-                                    conn.setForceGPU(true);
+                                    conn.setGpu(true)
+                                    conn.setForceGPU(true)
                                     val scriptGpu = conn.prepareScript(
                                         request.dml, inputs, Array(request.outputVarName))
 
-                                    // register the weights with the model
-                                    for ((name, matMap) <- request.weights) {
-                                        val rows = matMap("rows").toInt
-                                        val cols = matMap("cols").toInt
-                                        val format = matMap("format")
-                                        val data = matMap("data")
-                                        scriptCpu.setMatrix(
-                                            name, processMatrixInput(data, rows, cols, format), true)
-                                        scriptGpu.setMatrix(
-                                            name, processMatrixInput(data, rows, cols, format), true)
-                                    }
+                                    weightsMap.foreach(x => scriptCpu.setMatrix(x._1, x._2, true))
+                                    weightsMap.foreach(x => scriptGpu.setMatrix(x._1, x._2, true))
 
                                     // now register the created model
                                     val model = Model(
@@ -321,10 +309,26 @@ object PredictionService extends PredictionJsonProtocol with AddModelJsonProtoco
             val matAsArray = DataConverter.convertToDoubleMatrix(response.response)
             PredictionResponseExternal(matAsArray.map {
                 _.mkString(",")
-            }.mkString(Properties.lineSeparator), "csv")
+            }.mkString(Properties.lineSeparator), "csv", response.batchSize, response.execLatency)
         } else {
-            PredictionResponseExternal("ERROR", "ERROR")
+            PredictionResponseExternal("ERROR", "ERROR", -1, -1)
         }
+    }
+
+    def processWeights(dirname: String) : Map[String,MatrixBlock] = {
+        val dir = new File(dirname)
+        if (!(dir.exists && dir.isDirectory))
+            throw new Exception("Weight directory: " + dirname + " is invalid")
+
+        // TODO: Add logic to determine if Scheduler has enough space to load this model
+        val weightMap = new File(dirname).listFiles().filter(_.isFile).
+            map(_.toString).filter(x => x.slice(x.length-3,x.length) == "mtd").
+          map(x => getNameFromPath(x) -> conn.readMatrix(x.replace(".mtd", ""))).toMap
+        weightMap
+    }
+
+    def getNameFromPath(path: String) : String = {
+        path.split("/").last.split("\\.")(0)
     }
 
     def processPredictionRequest(request : PredictionRequestExternal) : PredictionRequest = {

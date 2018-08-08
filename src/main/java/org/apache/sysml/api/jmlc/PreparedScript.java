@@ -439,12 +439,11 @@ public class PreparedScript implements ConfigurableAPI
 		//add reused variables
 		_vars.putAll(_inVarReuse);
 
-		DMLScript.PRINT_GPU_MEMORY_INFO = _dmlconf.getBooleanValue(DMLConfig.PRINT_GPU_MEMORY_INFO);
-		DMLScript.SYNCHRONIZE_GPU = _dmlconf.getBooleanValue(DMLConfig.SYNCHRONIZE_GPU);
-		DMLScript.EAGER_CUDA_FREE = _dmlconf.getBooleanValue(DMLConfig.EAGER_CUDA_FREE);
-		NativeHelper.initialize(_dmlconf.getTextValue(DMLConfig.NATIVE_BLAS_DIR), _dmlconf.getTextValue(DMLConfig.NATIVE_BLAS).trim());
-
-		if(DMLScript.USE_ACCELERATOR) {
+		if (useGpu) {
+			DMLScript.PRINT_GPU_MEMORY_INFO = _dmlconf.getBooleanValue(DMLConfig.PRINT_GPU_MEMORY_INFO);
+			DMLScript.SYNCHRONIZE_GPU = _dmlconf.getBooleanValue(DMLConfig.SYNCHRONIZE_GPU);
+			DMLScript.EAGER_CUDA_FREE = _dmlconf.getBooleanValue(DMLConfig.EAGER_CUDA_FREE);
+			NativeHelper.initialize(_dmlconf.getTextValue(DMLConfig.NATIVE_BLAS_DIR), _dmlconf.getTextValue(DMLConfig.NATIVE_BLAS).trim());
 			DMLScript.FLOATING_POINT_PRECISION = _dmlconf.getTextValue(DMLConfig.FLOATING_POINT_PRECISION);
 			org.apache.sysml.runtime.matrix.data.LibMatrixCUDA.resetFloatingPointPrecision();
 		}
@@ -503,7 +502,7 @@ public class PreparedScript implements ConfigurableAPI
 				rvars.addResult(ovar, tmpVar);
 			}
 		}
-		
+
 		//clear thread-local configurations
 		ConfigurationManager.clearLocalConfigs();
 		return rvars;

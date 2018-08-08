@@ -913,7 +913,6 @@ class Keras2DML(Caffe2DML):
 
 
     """
-
     def __init__(self, sparkSession, keras_model, input_shape, transferUsingDF=False, load_keras_weights=True, weights=None, labels=None, batch_size=64, max_iter=2000, test_iter=10, test_interval=500, display=100, lr_policy="step", weight_decay=5e-4, regularization_type="L2"):
         """
         Performs training/prediction for a given keras model.

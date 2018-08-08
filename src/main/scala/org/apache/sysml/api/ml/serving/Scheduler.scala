@@ -46,10 +46,12 @@ trait JmlcExecutor extends Runnable {
         while (!_shouldShutdown) {
             val requests = scheduler.schedule(this)
             if (requests.nonEmpty) {
+                val start = System.nanoTime()
                 val responses = execute(requests)
-                val latency = System.nanoTime() - requests(0).receivedTime
+                val latency = System.nanoTime() - start
                 for ((req, resp) <- requests zip responses) {
                     req.response = resp
+                    resp.execLatency = latency
                     req.latch.countDown()
                 }
                 scheduler.onCompleteCallback(requests(0).model.name, latency, requests.length)
@@ -128,11 +130,12 @@ trait Scheduler {
 
     protected val requestQueue = new LinkedBlockingDeque[SchedulingRequest]()
     protected var modelQueues = new ConcurrentHashMap[String, BlockingQueue[SchedulingRequest]]()
-    protected val dummyResponse = PredictionResponse(null)
+    protected val dummyResponse = PredictionResponse(null, -1)
     var counter = 0
 
     private[serving] def enqueue(request: PredictionRequest, model: Model): Future[PredictionResponse] = Future {
         val schedulingRequest = SchedulingRequest(request, model, new CountDownLatch(1), System.nanoTime())
+        println("REQUEST RECEIVED FOR: " + model.name)
         requestQueue.add(schedulingRequest)
         modelQueues.get(model.name).add(schedulingRequest)
         counter += 1
@@ -171,6 +174,7 @@ class BasicBatchingScheduler(override val timeout: Duration,
                 val prevSize = modelBatchSizes.get(model)
                 modelBatchSizes.put(model,
                     if (latency < latencyObjective.toNanos) prevSize+2 else max((prevSize*.90).toInt, 1))
+                println("UPDATING BATCH SIZE FOR: " + model + " => " + modelBatchSizes.get(model))
             })
         }
         //RLS.enqueueExample(batchSize, latency)

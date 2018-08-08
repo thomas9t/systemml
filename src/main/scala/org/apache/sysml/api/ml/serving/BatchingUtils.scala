@@ -15,7 +15,8 @@ object BatchingUtils {
             var responses = Array[PredictionResponse]()
             val start = 0
             for (req <- requests) {
-                responses :+= PredictionResponse(batchedResults.slice(start, (start + req.request.requestSize)-1))
+                responses :+= PredictionResponse(
+                    batchedResults.slice(start, (start + req.request.requestSize)-1), batchedResults.getNumRows)
             }
             responses
         }

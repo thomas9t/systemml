@@ -87,6 +87,7 @@ object Utils {
   // Caffe utility functions
   def readCaffeNet(netFilePath: String): NetParameter = {
     // Load network
+    println("NETWORK FILE PATH " + netFilePath)
     val reader: InputStreamReader     = getInputStreamReader(netFilePath);
     val builder: NetParameter.Builder = NetParameter.newBuilder();
     TextFormat.merge(reader, builder);

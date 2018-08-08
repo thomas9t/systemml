@@ -34,6 +34,7 @@ import org.apache.hadoop.fs.Path;
 import org.apache.sysml.api.DMLException;
 import org.apache.sysml.api.DMLScript;
 import org.apache.sysml.api.DMLScript.RUNTIME_PLATFORM;
+import org.apache.sysml.api.mlcontext.Matrix;
 import org.apache.sysml.api.mlcontext.ScriptType;
 import org.apache.sysml.conf.CompilerConfig;
 import org.apache.sysml.conf.CompilerConfig.ConfigType;
@@ -384,24 +385,13 @@ public class Connection implements Closeable
 	////////////////////////////////////////////
 	// Read matrices
 	////////////////////////////////////////////
-	
-	/**
-	 * Reads an input matrix in arbitrary format from HDFS into a dense double array.
-	 * NOTE: this call currently only supports default configurations for CSV.
-	 * 
-	 * @param fname the filename of the input matrix
-	 * @return matrix as a two-dimensional double array
-	 * @throws IOException if IOException occurs
-	 */
-	public double[][] readDoubleMatrix(String fname) 
-		throws IOException
-	{
+
+	public MatrixBlock readMatrix(String fname) throws IOException {
 		try {
-			//read json meta data 
 			String fnamemtd = DataExpression.getMTDFileName(fname);
 			JSONObject jmtd = new DataExpression().readMetadataFile(fnamemtd, false);
-			
-			//parse json meta data 
+
+			//parse json meta data
 			long rows = jmtd.getLong(DataExpression.READROWPARAM);
 			long cols = jmtd.getLong(DataExpression.READCOLPARAM);
 			int brlen = jmtd.containsKey(DataExpression.ROWBLOCKCOUNTPARAM)?
@@ -412,9 +402,24 @@ public class Connection implements Closeable
 					jmtd.getLong(DataExpression.READNNZPARAM) : -1;
 			String format = jmtd.getString(DataExpression.FORMAT_TYPE);
 			InputInfo iinfo = InputInfo.stringExternalToInputInfo(format);
-		
-			//read matrix file
-			return readDoubleMatrix(fname, iinfo, rows, cols, brlen, bclen, nnz);
+			return readMatrix(fname, iinfo, rows, cols, brlen, bclen, nnz);
+		} catch (Exception ex) {
+			throw new IOException(ex);
+		}
+	}
+	
+	/**
+	 * Reads an input matrix in arbitrary format from HDFS into a dense double array.
+	 * NOTE: this call currently only supports default configurations for CSV.
+	 * 
+	 * @param fname the filename of the input matrix
+	 * @return matrix as a two-dimensional double array
+	 * @throws IOException if IOException occurs
+	 */
+	public double[][] readDoubleMatrix(String fname) throws IOException {
+		try {
+			MatrixBlock mb = readMatrix(fname);
+			return DataConverter.convertToDoubleMatrix(mb);
 		}
 		catch(Exception ex) {
 			throw new IOException(ex);
@@ -435,15 +440,15 @@ public class Connection implements Closeable
 	 * @return matrix as a two-dimensional double array
 	 * @throws IOException if IOException occurs
 	 */
-	public double[][] readDoubleMatrix(String fname, InputInfo iinfo, long rows, long cols, int brlen, int bclen, long nnz) 
+	public MatrixBlock readMatrix(String fname, InputInfo iinfo, long rows, long cols, int brlen, int bclen, long nnz)
 		throws IOException
 	{
 		setLocalConfigs();
 		
 		try {
 			MatrixReader reader = MatrixReaderFactory.createMatrixReader(iinfo);
-			MatrixBlock mb = reader.readMatrixFromHDFS(fname, rows, cols, brlen, bclen, nnz);
-			return DataConverter.convertToDoubleMatrix(mb);
+			return reader.readMatrixFromHDFS(fname, rows, cols, brlen, bclen, nnz);
+
 		}
 		catch(Exception ex) {
 			throw new IOException(ex);
