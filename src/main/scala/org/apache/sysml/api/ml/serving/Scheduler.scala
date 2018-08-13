@@ -21,11 +21,14 @@ package org.apache.sysml.api.ml.serving
 import scala.concurrent.Future
 import scala.concurrent.duration._
 import java.util.concurrent._
+import java.lang.Thread;
 
-import org.apache.sysml.runtime.instructions.gpu.context.GPUContextPool
+import org.apache.sysml.runtime.instructions.gpu.context.{GPUContext, GPUContextPool}
+import org.apache.sysml.runtime.DMLRuntimeException
+import org.apache.sysml.api.jmlc.PreparedScript
 
 import scala.concurrent.ExecutionContext
-import scala.math.{max, min}
+import scala.math.{max, min, floor}
 
 case class SchedulingRequest(request: PredictionRequest,
                              model: Model,
@@ -42,19 +45,17 @@ trait JmlcExecutor extends Runnable {
         _shouldShutdown = true
     }
 
+    def getExecType(): String
+
     def run(): Unit = {
         while (!_shouldShutdown) {
             val requests = scheduler.schedule(this)
             if (requests.nonEmpty) {
-                val start = System.nanoTime()
                 val responses = execute(requests)
-                val latency = System.nanoTime() - start
                 for ((req, resp) <- requests zip responses) {
                     req.response = resp
-                    resp.execLatency = latency
                     req.latch.countDown()
                 }
-                scheduler.onCompleteCallback(requests(0).model.name, latency, requests.length)
             }
         }
     }
@@ -63,17 +64,25 @@ trait JmlcExecutor extends Runnable {
 }
 
 // one task per GPU
-class GpuJmlcExecutor(override val scheduler: Scheduler) extends JmlcExecutor {
+class GpuJmlcExecutor(gCtx: GPUContext, override val scheduler: Scheduler) extends JmlcExecutor {
+
+    def getExecType() = { "GPU" }
+
     def execute(requests: Array[SchedulingRequest]): Array[PredictionResponse] = {
         var responses = Array[PredictionResponse]()
         if (requests.length > 0) {
+            println("EXEC GPU => " + requests.length)
+            val start = System.nanoTime()
             val batchedMatrixData = BatchingUtils.batchRequests(requests)
             val req = requests(0)
-            val script = req.model.scriptGpu
+            val script = req.model.scriptGpu.clone(false)
             script.setMatrix(req.model.inputVarName, batchedMatrixData, false)
-            val stret = script.executeScript()
+            val stret = script.executeScript(this.gCtx)
             val res = stret.getMatrixBlock(req.model.outputVarName)
             responses = BatchingUtils.unbatchRequests(requests, res)
+            val stop = System.nanoTime()
+            scheduler.onCompleteCallback(req.model.name, stop - start, requests.length, "GPU")
+            println("DONE EXEC GPU")
         }
         responses
     }
@@ -81,35 +90,43 @@ class GpuJmlcExecutor(override val scheduler: Scheduler) extends JmlcExecutor {
 
 // one task per core
 class CpuJmlcExecutor(override val scheduler: Scheduler) extends JmlcExecutor {
+
+    def getExecType() = { "CPU" }
+
     def execute(requests : Array[SchedulingRequest]) : Array[PredictionResponse] = {
         var responses = Array[PredictionResponse]()
         if (requests.length > 0) {
+            val start = System.nanoTime()
             val batchedMatrixData = BatchingUtils.batchRequests(requests)
             val req = requests(0)
-            val script = req.model.script
+            val script = req.model.script.clone(false)
             script.setMatrix(req.model.inputVarName, batchedMatrixData, false)
-            val res = script.executeScript().getMatrixBlock(req.model.outputVarName)
+            val sres = script.executeScript()
+            val res = sres.getMatrixBlock(req.model.outputVarName)
             responses = BatchingUtils.unbatchRequests(requests, res)
+            val stop = System.nanoTime()
+            scheduler.onCompleteCallback(req.model.name, stop - start, requests.length, "CPU")
         }
         responses
     }
 }
+
 
 trait Scheduler {
     var executorService: ExecutorService = _
     implicit val ec : ExecutionContext = ExecutionContext.fromExecutor(Executors.newFixedThreadPool(10000))
 
     def start(numCores: Int, cpuMemoryBudgetInBytes: Long, gpus: String): Unit = {
-        val numGpus = if (gpus == null) 0 else gpus.split(",").length
-        if (gpus != null)
-            GPUContextPool.AVAILABLE_GPUS = gpus
-
+        val gCtxs = if (gpus != null) GPUContextPool.reserveAllGPUContexts() else null
+        val numGpus = if (gCtxs != null) gCtxs.size() else 0
         executorService = Executors.newFixedThreadPool(numCores + numGpus)
+
+        println("STARTING SCHEDULER WITH: " + numCores + " CPU => " + numGpus + " GPUS")
         for (i <- 0 until numCores) {
             executorService.submit(new CpuJmlcExecutor(this))
         }
         for (i <- 0 until numGpus) {
-            executorService.submit(new GpuJmlcExecutor(this))
+            executorService.submit(new GpuJmlcExecutor(gCtxs.get(i),this))
         }
     }
 
@@ -126,7 +143,7 @@ trait Scheduler {
     def timeout: Duration
     def latencyObjective: Duration
 
-    def onCompleteCallback(model: String, latency: Double, batchSize: Int) : Unit
+    def onCompleteCallback(model: String, latency: Double, batchSize: Int, execType: String) : Unit
 
     protected val requestQueue = new LinkedBlockingDeque[SchedulingRequest]()
     protected var modelQueues = new ConcurrentHashMap[String, BlockingQueue[SchedulingRequest]]()
@@ -152,12 +169,14 @@ class BasicBatchingScheduler(override val timeout: Duration,
                              override val latencyObjective:  Duration) extends Scheduler {
 
     var isGpuEnabled = false
-    var modelBatchSizes = new ConcurrentHashMap[String, Int]()
-    val RLS : RLSEstimator = new RLSEstimator()
+    val modelBatchSizes = new ConcurrentHashMap[String, ConcurrentHashMap[String,Int]]()
+    modelBatchSizes.put("GPU", new ConcurrentHashMap[String,Int]())
+    modelBatchSizes.put("CPU", new ConcurrentHashMap[String,Int]())
 
-    def getOptimalBatchSize(model : String) : Int = {
-        modelBatchSizes.putIfAbsent(model, 2)
-        modelBatchSizes.get(model)
+    def getOptimalBatchSize(model : String, execType: String) : Int = {
+        modelBatchSizes.get(execType).putIfAbsent(model, 2)
+        modelBatchSizes.get(execType).get(model)
+        1
     }
 
     def getExpectedExecutionTimeCPU(model : String, batchSize : Int) : Long = { 2L }
@@ -168,27 +187,31 @@ class BasicBatchingScheduler(override val timeout: Duration,
 
     def setGpuEnabled(flag: Boolean) : Unit = { isGpuEnabled = flag }
 
-    override def onCompleteCallback(model: String, latency: Double, batchSize: Int): Unit = {
+    override def onCompleteCallback(model: String, 
+                                    latency: Double, 
+                                    batchSize: Int, 
+                                    execType: String): Unit = {
         if (latency != latencyObjective.toNanos) {
             modelBatchSizes.synchronized({
-                val prevSize = modelBatchSizes.get(model)
-                modelBatchSizes.put(model,
-                    if (latency < latencyObjective.toNanos) prevSize+2 else max((prevSize*.90).toInt, 1))
-                println("UPDATING BATCH SIZE FOR: " + model + " => " + modelBatchSizes.get(model))
+                val prevSize = modelBatchSizes.get(execType).get(model)
+                modelBatchSizes.get(execType).put(model,
+                    if (latency < latencyObjective.toNanos) prevSize+2 else floor(prevSize*0.90).toInt)
+                println("UPDATING " + execType + " BATCH SIZE FOR: " + model + " => " + modelBatchSizes.get(execType).get(model))
             })
         }
-        //RLS.enqueueExample(batchSize, latency)
     }
 
     // TODO deal with case that there are more resources available
     override def schedule(executor: JmlcExecutor) : Array[SchedulingRequest] = {
         var ret = Array[SchedulingRequest]()
         if (requestQueue.size() > 0) {
+            val execType = executor.getExecType()
             dummyResponse.synchronized {
                 if (requestQueue.size() > 0) {
-                    val schedulableModels = getSchedulableModels()
+                    val schedulableModels = getSchedulableModels(execType)
                     if (schedulableModels.nonEmpty) {
-                        val (nextModel, nextBatchSize) = getNextModelAndBatchSize(schedulableModels)
+                        val (nextModel, nextBatchSize) = getNextModelAndBatchSize(
+                            schedulableModels, execType)
                         for (_ <- 0 until nextBatchSize) {
                             val next = modelQueues.get(nextModel).poll()
                             assert(next != null, "Something is wrong")
@@ -206,12 +229,13 @@ class BasicBatchingScheduler(override val timeout: Duration,
       * @param models A list of models to schedule
       * @return The model to schedule next
       */
-    def getNextModelAndBatchSize(models : Iterable[String]) : (String, Int) = {
+    def getNextModelAndBatchSize(models : Iterable[String], execType: String) : (String, Int) = {
         val nextModel = models.map(
-            m => ((getExpectedExecutionTime(m, getOptimalBatchSize(m))), m)
+            m => ((getExpectedExecutionTime(m, getOptimalBatchSize(m, execType))), m)
         ).minBy(x => x._1)._2
 
-        val nextBatchSize = min(modelQueues.get(nextModel).size(), getOptimalBatchSize(nextModel))
+        val nextBatchSize = min(modelQueues.get(nextModel).size(), 
+                                getOptimalBatchSize(nextModel, execType))
         (nextModel, nextBatchSize)
     }
 
@@ -221,7 +245,7 @@ class BasicBatchingScheduler(override val timeout: Duration,
       * to time out (timing out being defined as 10% remainin on its clock) is executed immediately.
       * @return A list of models which may be scheduled
       */
-    def getSchedulableModels() : Array[String] = {
+    def getSchedulableModels(execType: String) : Array[String] = {
         var batchableModels = Array[String]()
         var shortFuse = Array[(String,Long)]()
         val keyIterator = modelQueues.keys()
@@ -230,9 +254,10 @@ class BasicBatchingScheduler(override val timeout: Duration,
             if (modelQueues.get(name).size() > 0) {
                 val nextRequest = modelQueues.get(name).peek()
                 if (checkShortFuse(nextRequest)) {
+                    println("WARNING: SHORT FUSE!")
                     shortFuse :+= (name, nextRequest.receivedTime - System.nanoTime())
                 }
-                if (modelQueues.get(name).size() >= getOptimalBatchSize(name)) {
+                if (modelQueues.get(name).size() >= getOptimalBatchSize(name, execType)) {
                     batchableModels :+= name
                 }
             }
@@ -248,7 +273,7 @@ class BasicBatchingScheduler(override val timeout: Duration,
 
     def checkShortFuse(request: SchedulingRequest) : Boolean = {
         val elapsed = System.nanoTime() - request.receivedTime
-        val shortFuse = elapsed >= (0.9*timeout.toNanos).toLong
+        val shortFuse = elapsed >= (1.2*latencyObjective.toNanos).toLong
         shortFuse
     }
 
@@ -256,6 +281,8 @@ class BasicBatchingScheduler(override val timeout: Duration,
 
 class NonBatchingScheduler(override val timeout: Duration,
                            override val latencyObjective: Duration) extends Scheduler {
+
+    println("HELLO FROM NON-BATCHING SCHEDULER")
     override def schedule(executor: JmlcExecutor): Array[SchedulingRequest] = {
         var ret = Array[SchedulingRequest]()
         dummyResponse.synchronized {
@@ -267,5 +294,5 @@ class NonBatchingScheduler(override val timeout: Duration,
         ret
     }
 
-    override def onCompleteCallback(model: String, latency: Double, batchSize: Int): Unit = {}
+    override def onCompleteCallback(model: String, latency: Double, batchSize: Int, execType: String): Unit = {}
 }

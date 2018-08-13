@@ -21,10 +21,12 @@ package org.apache.sysml.api.jmlc;
 
 import java.util.Collections;
 import java.util.HashMap;
+import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map.Entry;
 
+import org.apache.avro.generic.GenericData;
 import org.apache.commons.lang.NotImplementedException;
 import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
@@ -439,14 +441,36 @@ public class PreparedScript implements ConfigurableAPI
 		//add reused variables
 		_vars.putAll(_inVarReuse);
 
-		if (useGpu) {
-			DMLScript.PRINT_GPU_MEMORY_INFO = _dmlconf.getBooleanValue(DMLConfig.PRINT_GPU_MEMORY_INFO);
-			DMLScript.SYNCHRONIZE_GPU = _dmlconf.getBooleanValue(DMLConfig.SYNCHRONIZE_GPU);
-			DMLScript.EAGER_CUDA_FREE = _dmlconf.getBooleanValue(DMLConfig.EAGER_CUDA_FREE);
-			NativeHelper.initialize(_dmlconf.getTextValue(DMLConfig.NATIVE_BLAS_DIR), _dmlconf.getTextValue(DMLConfig.NATIVE_BLAS).trim());
-			DMLScript.FLOATING_POINT_PRECISION = _dmlconf.getTextValue(DMLConfig.FLOATING_POINT_PRECISION);
-			org.apache.sysml.runtime.matrix.data.LibMatrixCUDA.resetFloatingPointPrecision();
+		//set thread-local configurations
+		ConfigurationManager.setLocalConfig(_dmlconf);
+		ConfigurationManager.setLocalConfig(_cconf);
+
+		//create and populate execution context
+		ExecutionContext ec = ExecutionContextFactory.createContext(_vars, _prog);
+
+		//core execute runtime program
+		_prog.execute(ec);
+
+		//cleanup unnecessary outputs
+		_vars.removeAllNotIn(_outVarnames);
+		
+		//construct results
+		ResultVariables rvars = new ResultVariables();
+		for( String ovar : _outVarnames ) {
+			Data tmpVar = _vars.get(ovar);
+			if( tmpVar != null ) {
+				rvars.addResult(ovar, tmpVar);
+			}
 		}
+
+		//clear thread-local configurations
+		ConfigurationManager.clearLocalConfigs();
+		return rvars;
+	}
+
+	public ResultVariables executeScript(GPUContext gCtx) {
+		//add reused variables
+		_vars.putAll(_inVarReuse);
 
 		//set thread-local configurations
 		ConfigurationManager.setLocalConfig(_dmlconf);
@@ -454,46 +478,26 @@ public class PreparedScript implements ConfigurableAPI
 
 		//create and populate execution context
 		ExecutionContext ec = ExecutionContextFactory.createContext(_vars, _prog);
-		if (useGpu && ec != null) {
-			List<GPUContext> gCtxs = GPUContextPool.reserveAllGPUContexts();
-			if (gCtxs == null) {
-				throw new DMLRuntimeException(
-						"GPU : Could not create GPUContext, either no GPU or all GPUs currently in use");
-			}
-			gCtxs.get(0).initializeThread();
-			ec.setGPUContexts(gCtxs);
-		}
+		gCtx.initializeThread();
+		List<GPUContext> gCtxs = new ArrayList<>();
+		gCtxs.add(gCtx);
+		ec.setGPUContexts(gCtxs);
 
 		//core execute runtime program
 		_prog.execute(ec);
 
-		if (useGpu && !ec.getGPUContexts().isEmpty()) {
-			// -----------------------------------------------------------------
-			// The below code pulls the output variables on the GPU to the host. This is required especially when:
-			// The output variable was generated as part of a MLContext session with GPU enabled
-			// and was passed to another MLContext with GPU disabled
-			// The above scenario occurs in our gpu test suite (eg: BatchNormTest).
-			for (String outVar : _outVarnames) {
-				Data data = ec.getVariable(outVar);
-				if (data instanceof MatrixObject) {
-					for (GPUContext gCtx : ec.getGPUContexts()) {
-						GPUObject gpuObj = ((MatrixObject) data).getGPUObject(gCtx);
-						if (gpuObj != null && gpuObj.isDirty()) {
-							gpuObj.acquireHostRead(null);
-						}
-					}
-				}
+		for (String outVar : _outVarnames) {
+			Data data = ec.getVariable(outVar);
+			GPUObject gpuObj = ((MatrixObject) data).getGPUObject(gCtx);
+			if (gpuObj != null && gpuObj.isDirty()) {
+				gpuObj.acquireHostRead(null);
 			}
-			// -----------------------------------------------------------------
-			for (GPUContext gCtx : ec.getGPUContexts()) {
-				gCtx.clearTemporaryMemory();
-			}
-			GPUContextPool.freeAllGPUContexts();
 		}
+		gCtx.clearTemporaryMemory();
 
 		//cleanup unnecessary outputs
 		_vars.removeAllNotIn(_outVarnames);
-		
+
 		//construct results
 		ResultVariables rvars = new ResultVariables();
 		for( String ovar : _outVarnames ) {

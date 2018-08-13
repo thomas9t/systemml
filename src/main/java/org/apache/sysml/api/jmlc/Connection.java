@@ -35,6 +35,7 @@ import org.apache.sysml.api.DMLException;
 import org.apache.sysml.api.DMLScript;
 import org.apache.sysml.api.DMLScript.RUNTIME_PLATFORM;
 import org.apache.sysml.api.mlcontext.Matrix;
+import org.apache.sysml.utils.NativeHelper;
 import org.apache.sysml.api.mlcontext.ScriptType;
 import org.apache.sysml.conf.CompilerConfig;
 import org.apache.sysml.conf.CompilerConfig.ConfigType;
@@ -100,6 +101,7 @@ public class Connection implements Closeable
 {
 	private final DMLConfig _dmlconf;
 	private final CompilerConfig _cconf;
+	private boolean _gpuEnabled = false;
 	
 	/**
 	 * Connection constructor, the starting point for any other JMLC API calls.
@@ -215,10 +217,21 @@ public class Connection implements Closeable
 
 	/**
 	 * Configures the list of available GPUs to use for this connection.
+	 * TODO: this is confusing and hacky - improve it
 	 *
 	 * @param gpuConfig String containing a comma separated list of GPU devices or -1 to use all GPUs available
 	 */
-	public void setAvailableGpu(String gpuConfig) { GPUContextPool.AVAILABLE_GPUS = gpuConfig; }
+	public void enableGpu(String gpuConfig) {
+		GPUContextPool.AVAILABLE_GPUS = gpuConfig;
+		DMLScript.PRINT_GPU_MEMORY_INFO = _dmlconf.getBooleanValue(DMLConfig.PRINT_GPU_MEMORY_INFO);
+		DMLScript.SYNCHRONIZE_GPU = _dmlconf.getBooleanValue(DMLConfig.SYNCHRONIZE_GPU);
+		DMLScript.EAGER_CUDA_FREE = _dmlconf.getBooleanValue(DMLConfig.EAGER_CUDA_FREE);
+		NativeHelper.initialize(_dmlconf.getTextValue(DMLConfig.NATIVE_BLAS_DIR), _dmlconf.getTextValue(DMLConfig.NATIVE_BLAS).trim());
+		DMLScript.FLOATING_POINT_PRECISION = _dmlconf.getTextValue(DMLConfig.FLOATING_POINT_PRECISION);
+		org.apache.sysml.runtime.matrix.data.LibMatrixCUDA.resetFloatingPointPrecision();
+		_gpuEnabled = true;
+		setGpu(true);
+	}
 	
 	/**
 	 * Prepares (precompiles) a script and registers input and output variables.
