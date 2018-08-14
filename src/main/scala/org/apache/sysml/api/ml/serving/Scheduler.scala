@@ -96,6 +96,7 @@ class CpuJmlcExecutor(override val scheduler: Scheduler) extends JmlcExecutor {
     def execute(requests : Array[SchedulingRequest]) : Array[PredictionResponse] = {
         var responses = Array[PredictionResponse]()
         if (requests.length > 0) {
+            println("EXEC CPU => " + requests.length)
             val start = System.nanoTime()
             val batchedMatrixData = BatchingUtils.batchRequests(requests)
             val req = requests(0)
@@ -106,6 +107,7 @@ class CpuJmlcExecutor(override val scheduler: Scheduler) extends JmlcExecutor {
             responses = BatchingUtils.unbatchRequests(requests, res)
             val stop = System.nanoTime()
             scheduler.onCompleteCallback(req.model.name, stop - start, requests.length, "CPU")
+            println("DONE EXEC CPU")
         }
         responses
     }
@@ -176,7 +178,7 @@ class BasicBatchingScheduler(override val timeout: Duration,
     def getOptimalBatchSize(model : String, execType: String) : Int = {
         modelBatchSizes.get(execType).putIfAbsent(model, 2)
         modelBatchSizes.get(execType).get(model)
-        1
+        2
     }
 
     def getExpectedExecutionTimeCPU(model : String, batchSize : Int) : Long = { 2L }

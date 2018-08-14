@@ -493,7 +493,6 @@ public class PreparedScript implements ConfigurableAPI
 				gpuObj.acquireHostRead(null);
 			}
 		}
-		gCtx.clearTemporaryMemory();
 
 		//cleanup unnecessary outputs
 		_vars.removeAllNotIn(_outVarnames);

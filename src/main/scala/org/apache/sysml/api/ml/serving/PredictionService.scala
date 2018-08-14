@@ -182,12 +182,14 @@ object PredictionService extends PredictionJsonProtocol with AddModelJsonProtoco
 
         // TODO: Set the scheduler using factory
         //scheduler = new NoBatching(timeout)
-        //scheduler = new BasicBatchingScheduler(300.seconds, 10.seconds)
+        // scheduler = new BasicBatchingScheduler(timeout, latencyObjective)
         scheduler = new NonBatchingScheduler(timeout, latencyObjective)
+        // val gpus = null
         val gpus = "-1"
         val numCores = Runtime.getRuntime().availableProcessors()
         val maxMemory = Runtime.getRuntime().totalMemory()
-        conn.enableGpu(gpus)
+        if (gpus != null)
+            conn.enableGpu(gpus)
         scheduler.start(numCores, maxMemory, gpus)
 
         // Define unsecured routes: /predict and /health
