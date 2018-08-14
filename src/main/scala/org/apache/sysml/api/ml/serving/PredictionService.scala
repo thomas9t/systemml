@@ -127,7 +127,12 @@ curl -u admin -XGET localhost:9000/shutdown
  */
 object PredictionService extends PredictionJsonProtocol with AddModelJsonProtocol {
     // val LOG = LogFactory.getLog(classOf[PredictionService].getName())
-    val customConf = ConfigFactory.parseString("idle-timeout=infinite")
+    val customConf = ConfigFactory.parseString("""
+        akka.http.server.idle-timeout=infinite
+        akka.http.client.idle-timeout=infinite
+        akka.http.host-connection-pool.idle-timeout=infinite
+        akka.http.host-connection-pool.client.idle-timeout=infinite
+    """)
     val basicConf = ConfigFactory.load()
     val combined = customConf.withFallback(basicConf)
     implicit val system = ActorSystem("systemml-prediction-service", ConfigFactory.load(combined))
