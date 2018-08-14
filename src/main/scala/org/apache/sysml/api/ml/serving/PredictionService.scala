@@ -210,7 +210,7 @@ object PredictionService extends PredictionJsonProtocol with AddModelJsonProtoco
         // scheduler = new NonBatchingScheduler(timeout, latencyObjective)
         // val gpus = null
         val gpus = "-1"
-        val numCores = Runtime.getRuntime().availableProcessors()
+        val numCores = Runtime.getRuntime().availableProcessors() - 1
         val maxMemory = Runtime.getRuntime().totalMemory()
         if (gpus != null)
             conn.enableGpu(gpus)
