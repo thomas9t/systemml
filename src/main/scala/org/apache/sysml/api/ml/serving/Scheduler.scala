@@ -103,7 +103,7 @@ class CpuJmlcExecutor(override val scheduler: Scheduler) extends JmlcExecutor {
             println("EXEC CPU => " + requests.length)
             val start = System.nanoTime()
             val batchedMatrixData = BatchingUtils.batchRequests(requests)
-            val batchingTime = System.nanoTime - start
+            val batchingTime = System.nanoTime() - start
             val req = requests(0)
             val script = req.model.script.clone(false)
             val computeStart = System.nanoTime()
