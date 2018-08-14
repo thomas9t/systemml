@@ -41,7 +41,6 @@ class RLSEstimator {
     }
 
     def update() : Unit = {
-        println("COMPUTING UPDATE")
         val s = pow(lda, n)
         val R = dequeueExamples()
         val X = R._1

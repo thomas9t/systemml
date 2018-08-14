@@ -53,6 +53,7 @@ trait JmlcExecutor extends Runnable {
             if (requests.nonEmpty) {
                 val responses = execute(requests)
                 for ((req, resp) <- requests zip responses) {
+                    resp.execType = this.getExecType
                     req.response = resp
                     req.latch.countDown()
                 }
@@ -74,12 +75,15 @@ class GpuJmlcExecutor(gCtx: GPUContext, override val scheduler: Scheduler) exten
             println("EXEC GPU => " + requests.length)
             val start = System.nanoTime()
             val batchedMatrixData = BatchingUtils.batchRequests(requests)
+            val batchingTime = System.nanoTime() - start
             val req = requests(0)
             val script = req.model.scriptGpu.clone(false)
             script.setMatrix(req.model.inputVarName, batchedMatrixData, false)
-            val stret = script.executeScript(this.gCtx)
-            val res = stret.getMatrixBlock(req.model.outputVarName)
-            responses = BatchingUtils.unbatchRequests(requests, res)
+            val computeStart = System.nanoTime()
+            val res = script.executeScript(this.gCtx).getMatrixBlock(req.model.outputVarName)
+            val computeTime = System.nanoTime() - computeStart
+            val unbatchStart = System.nanoTime()
+            responses = BatchingUtils.unbatchRequests(requests, res, batchingTime, computeTime)
             val stop = System.nanoTime()
             scheduler.onCompleteCallback(req.model.name, stop - start, requests.length, "GPU")
             println("DONE EXEC GPU")
@@ -99,12 +103,14 @@ class CpuJmlcExecutor(override val scheduler: Scheduler) extends JmlcExecutor {
             println("EXEC CPU => " + requests.length)
             val start = System.nanoTime()
             val batchedMatrixData = BatchingUtils.batchRequests(requests)
+            val batchingTime = System.nanoTime - start
             val req = requests(0)
             val script = req.model.script.clone(false)
+            val computeStart = System.nanoTime()
             script.setMatrix(req.model.inputVarName, batchedMatrixData, false)
-            val sres = script.executeScript()
-            val res = sres.getMatrixBlock(req.model.outputVarName)
-            responses = BatchingUtils.unbatchRequests(requests, res)
+            val computeTime = System.nanoTime() - computeStart
+            val res = script.executeScript().getMatrixBlock(req.model.outputVarName)
+            responses = BatchingUtils.unbatchRequests(requests, res, batchingTime, computeStart)
             val stop = System.nanoTime()
             scheduler.onCompleteCallback(req.model.name, stop - start, requests.length, "CPU")
             println("DONE EXEC CPU")
@@ -174,11 +180,13 @@ class BasicBatchingScheduler(override val timeout: Duration,
     val modelBatchSizes = new ConcurrentHashMap[String, ConcurrentHashMap[String,Int]]()
     modelBatchSizes.put("GPU", new ConcurrentHashMap[String,Int]())
     modelBatchSizes.put("CPU", new ConcurrentHashMap[String,Int]())
+    // modelExecTimes = new ConcurrentHashMap[String,ConcurrentHashMap[String,RLSEstimator]]()
+    // modelExecTimes.put("GPU", new ConcurrentHashMap[String,RLSEstimator]())
+    // modelExecTimes.put("CPU", new ConcurrentHashMap[String,RLSEstimator]())
 
     def getOptimalBatchSize(model : String, execType: String) : Int = {
-        modelBatchSizes.get(execType).putIfAbsent(model, 2)
+        modelBatchSizes.get(execType).putIfAbsent(model, 1)
         modelBatchSizes.get(execType).get(model)
-        2
     }
 
     def getExpectedExecutionTimeCPU(model : String, batchSize : Int) : Long = { 2L }
@@ -201,6 +209,7 @@ class BasicBatchingScheduler(override val timeout: Duration,
                 println("UPDATING " + execType + " BATCH SIZE FOR: " + model + " => " + modelBatchSizes.get(execType).get(model))
             })
         }
+
     }
 
     // TODO deal with case that there are more resources available

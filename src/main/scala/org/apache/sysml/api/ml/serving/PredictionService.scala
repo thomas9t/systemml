@@ -31,6 +31,7 @@ import org.apache.commons.cli.PosixParser
 import com.typesafe.config.ConfigFactory
 
 import scala.concurrent.duration._
+import java.util.concurrent._
 import java.util.HashMap
 
 import akka.http.scaladsl.marshallers.sprayjson.SprayJsonSupport
@@ -48,7 +49,15 @@ import org.apache.sysml.api.jmlc.PreparedScript
 // format: can be file, binary, csv, ijv, jpeg, ...
 
 case class PredictionRequestExternal(name: String, data: String, format: String, rows: Int, cols: Int)
-case class PredictionResponseExternal(response: String, format: String, batchSize: Int, execLatency: Long)
+case class PredictionResponseExternal(response: String, 
+                                      format: String, 
+                                      batchSize: Int, 
+                                      execTime: Long, 
+                                      execType: String,
+                                      requestDeserializationTime: Long,
+                                      responseSerializationTime: Long,
+                                      batchingTime: Long,
+                                      unbatchingTime: Long)
 
 case class AddModelRequest(name: String, dml: String, inputVarName: String,
                            outputVarName: String, weightsDir: String)
@@ -60,11 +69,16 @@ case class Model(name: String,
                  scriptGpu: PreparedScript = null)
 case class PredictionRequest(data : MatrixBlock, modelName : String, requestSize : Int)
 
-case class PredictionResponse(response: MatrixBlock, batchSize: Int, var execLatency: Long = -1)
+case class PredictionResponse(response: MatrixBlock, 
+                              batchSize: Int, 
+                              var execTime: Long = -1, 
+                              var execType: String = "",
+                              var batchingTime: Long = -1,
+                              var unbatchingTime: Long = -1)
 
 trait PredictionJsonProtocol extends SprayJsonSupport with DefaultJsonProtocol {
     implicit val predictionRequestExternalFormat = jsonFormat5(PredictionRequestExternal)
-    implicit val predictionResponseExternalFormat = jsonFormat4(PredictionResponseExternal)
+    implicit val predictionResponseExternalFormat = jsonFormat9(PredictionResponseExternal)
 }
 
 trait AddModelJsonProtocol extends SprayJsonSupport with DefaultJsonProtocol {
@@ -179,7 +193,7 @@ object PredictionService extends PredictionJsonProtocol with AddModelJsonProtoco
         val sizeDirective = if (line.hasOption("max_bytes"))
             withSizeLimit(line.getOptionValue("max_bytes").toLong) else withoutSizeLimit
         val latencyObjective = if (line.hasOption("latency_objective"))
-            Duration(line.getOptionValue("latency_objective").toLong, MILLISECONDS) else 15.seconds
+            Duration(line.getOptionValue("latency_objective").toLong, MILLISECONDS) else 10.seconds
 
         // Initialize statistics counters
         val numTimeouts = new LongAdder
@@ -214,12 +228,14 @@ object PredictionService extends PredictionJsonProtocol with AddModelJsonProtoco
                                         currNumRequests.increment()
                                         val start = System.nanoTime()
                                         val processedRequest = processPredictionRequest(request)
+                                        val deserializationTime = System.nanoTime() - start
+
                                         val schedulerResult = scheduler.enqueue(processedRequest, models(request.name))
                                         val response = Await.result(schedulerResult, timeout)
                                         totalTime.add(System.nanoTime() - start)
 
                                         numCompletedPredictions.increment()
-                                        complete(StatusCodes.OK, processPredictionResponse(response, "NOT IMPLEMENTED"))
+                                        complete(StatusCodes.OK, processPredictionResponse(response, "NOT IMPLEMENTED", deserializationTime))
                                     } catch {
                                         case e: scala.concurrent.TimeoutException => {
                                             numTimeouts.increment()
@@ -317,15 +333,21 @@ object PredictionService extends PredictionJsonProtocol with AddModelJsonProtoco
           .onComplete(_ ⇒ system.terminate())
     }
 
-    def processPredictionResponse(response : PredictionResponse, format : String) : PredictionResponseExternal = {
+    def processPredictionResponse(response : PredictionResponse, 
+                                  format : String, 
+                                  deserializationTime: Long) : PredictionResponseExternal = {
         // TODO: Implement other output types...
         if (response.response != null) {
+            val start = System.nanoTime()
             val matAsArray = DataConverter.convertToDoubleMatrix(response.response)
-            PredictionResponseExternal(matAsArray.map {
-                _.mkString(",")
-            }.mkString(Properties.lineSeparator), "csv", response.batchSize, response.execLatency)
+            val matAsStr = matAsArray.map {_.mkString(",")}.mkString(Properties.lineSeparator)
+            val serializationTime = System.nanoTime() - start
+            PredictionResponseExternal(matAsStr, "csv", response.batchSize, 
+                response.execTime, response.execType, 
+                deserializationTime, serializationTime, 
+                response.batchingTime, response.unbatchingTime)
         } else {
-            PredictionResponseExternal("ERROR", "ERROR", -1, -1)
+            PredictionResponseExternal("ERROR", "ERROR", -1, -1, "ERROR", -1, -1, -1, -1)
         }
     }
 

@@ -11,12 +11,20 @@ object BatchingUtils {
         }
 
         def unbatchRequests(requests: Array[SchedulingRequest],
-                            batchedResults: MatrixBlock) : Array[PredictionResponse] = {
+                            batchedResults: MatrixBlock,
+                            execTime: Long,
+                            batchingTime: Long) : Array[PredictionResponse] = {
             var responses = Array[PredictionResponse]()
             val start = 0
             for (req <- requests) {
-                responses :+= PredictionResponse(
-                    batchedResults.slice(start, (start + req.request.requestSize)-1), batchedResults.getNumRows)
+                val unbatchStart = System.nanoTime()
+                val resp = PredictionResponse(batchedResults.slice(
+                    start, (start + req.request.requestSize)-1), 
+                    batchedResults.getNumRows)
+                resp.unbatchingTime = System.nanoTime - unbatchStart
+                resp.batchingTime = batchingTime
+                resp.execTime = execTime
+                responses :+= resp
             }
             responses
         }
