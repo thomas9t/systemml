@@ -28,6 +28,7 @@ import akka.http.scaladsl.Http
 import akka.actor.ActorSystem
 import akka.stream.ActorMaterializer
 import org.apache.commons.cli.PosixParser
+import com.typesafe.config.ConfigFactory
 
 import scala.concurrent.duration._
 import java.util.HashMap
@@ -126,7 +127,17 @@ curl -u admin -XGET localhost:9000/shutdown
  */
 object PredictionService extends PredictionJsonProtocol with AddModelJsonProtocol {
     // val LOG = LogFactory.getLog(classOf[PredictionService].getName())
-    implicit val system = ActorSystem("systemml-prediction-service")
+    val customConf = ConfigFactory.parseString("""
+            akka.http.server.idle-timeout=null
+            akka.http.client.idle-timeout=null
+            akka.http.host-connection-pool.idle-timeout=null
+            akka.http.host-connection-pool.client.idle-timeout=null
+        """)
+    println(customConf.root.render)
+    val regularConfig = ConfigFactory.load()
+    val combined = customConf.withFallback(regularConfig)
+    val complete = ConfigFactory.load(combined)
+    implicit val system = ActorSystem("systemml-prediction-service", combined)
     implicit val materializer = ActorMaterializer()
     implicit val executionContext = system.dispatcher
     implicit val timeout = akka.util.Timeout(300.seconds)
@@ -182,8 +193,8 @@ object PredictionService extends PredictionJsonProtocol with AddModelJsonProtoco
 
         // TODO: Set the scheduler using factory
         //scheduler = new NoBatching(timeout)
-        // scheduler = new BasicBatchingScheduler(timeout, latencyObjective)
-        scheduler = new NonBatchingScheduler(timeout, latencyObjective)
+        scheduler = new BasicBatchingScheduler(timeout, latencyObjective)
+        // scheduler = new NonBatchingScheduler(timeout, latencyObjective)
         // val gpus = null
         val gpus = "-1"
         val numCores = Runtime.getRuntime().availableProcessors()
