@@ -82,9 +82,8 @@ class GpuJmlcExecutor(gCtx: GPUContext, override val scheduler: Scheduler) exten
             val res = script.executeScript(this.gCtx).getMatrixBlock(req.model.outputVarName)
             val computeTime = System.nanoTime() - computeStart
             val unbatchStart = System.nanoTime()
-            responses = BatchingUtils.unbatchRequests(requests, res, batchingTime, computeTime)
-            val stop = System.nanoTime()
-            scheduler.onCompleteCallback(req.model.name, stop - start, requests.length, "GPU")
+            val (responses, avgLatency) = BatchingUtils.unbatchRequests(requests, res, batchingTime, computeTime)
+            scheduler.onCompleteCallback(req.model.name, avgLatency, requests.length, "GPU")
             println("DONE EXEC GPU")
         }
         responses
@@ -109,9 +108,8 @@ class CpuJmlcExecutor(override val scheduler: Scheduler) extends JmlcExecutor {
             script.setMatrix(req.model.inputVarName, batchedMatrixData, false)
             val computeTime = System.nanoTime() - computeStart
             val res = script.executeScript().getMatrixBlock(req.model.outputVarName)
-            responses = BatchingUtils.unbatchRequests(requests, res, batchingTime, computeStart)
-            val stop = System.nanoTime()
-            scheduler.onCompleteCallback(req.model.name, stop - start, requests.length, "CPU")
+            val (responses, avgLatency) = BatchingUtils.unbatchRequests(requests, res, batchingTime, computeStart)
+            scheduler.onCompleteCallback(req.model.name, avgLatency, requests.length, "CPU")
             println("DONE EXEC CPU")
         }
         responses
@@ -206,6 +204,7 @@ class BasicBatchingScheduler(override val timeout: Duration,
                 val prevSize = modelBatchSizes.get(execType).get(model)
                 modelBatchSizes.get(execType).put(model,
                     if (latency < latencyObjective.toNanos) prevSize+2 else floor(prevSize*0.90).toInt)
+                println("LATENCY OBJECTIVE: " + latencyObjective + " EXEC TIME => " + latency)
                 println("UPDATING " + execType + " BATCH SIZE FOR: " + model + " => " + modelBatchSizes.get(execType).get(model))
             })
         }
