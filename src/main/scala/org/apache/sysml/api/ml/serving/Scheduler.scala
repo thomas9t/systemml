@@ -21,20 +21,19 @@ package org.apache.sysml.api.ml.serving
 import scala.concurrent.Future
 import scala.concurrent.duration._
 import java.util.concurrent._
-import java.lang.Thread;
 
 import org.apache.sysml.runtime.instructions.gpu.context.{GPUContext, GPUContextPool}
-import org.apache.sysml.runtime.DMLRuntimeException
-import org.apache.sysml.api.jmlc.PreparedScript
 
 import scala.concurrent.ExecutionContext
-import scala.math.{max, min, floor}
+import scala.math.{min, floor}
 
 case class SchedulingRequest(request: PredictionRequest,
                              model: Model,
                              latch: CountDownLatch,
                              receivedTime: Long,
-                             var response: PredictionResponse = null)
+                             var response: PredictionResponse = null,
+                             var queueWaitTime: Long = -1,
+                             var queueSize: Int = -1)
 
 trait JmlcExecutor extends Runnable {
     @volatile protected var _shouldShutdown: Boolean = false
@@ -160,6 +159,7 @@ trait Scheduler {
 
     private[serving] def enqueue(request: PredictionRequest, model: Model): Future[PredictionResponse] = Future {
         val schedulingRequest = SchedulingRequest(request, model, new CountDownLatch(1), System.nanoTime())
+        schedulingRequest.queueSize = modelQueues.get(model).size
         println("REQUEST RECEIVED FOR: " + model.name)
         requestQueue.add(schedulingRequest)
         modelQueues.get(model.name).add(schedulingRequest)
@@ -212,7 +212,6 @@ class BasicBatchingScheduler(override val timeout: Duration,
 
     }
 
-    // TODO deal with case that there are more resources available
     override def schedule(executor: JmlcExecutor) : Array[SchedulingRequest] = {
         var ret = Array[SchedulingRequest]()
         if (requestQueue.size() > 0) {

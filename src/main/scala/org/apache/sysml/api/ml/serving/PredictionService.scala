@@ -57,7 +57,9 @@ case class PredictionResponseExternal(response: String,
                                       requestDeserializationTime: Long,
                                       responseSerializationTime: Long,
                                       batchingTime: Long,
-                                      unbatchingTime: Long)
+                                      unbatchingTime: Long,
+                                      queueWaitTime: Long,
+                                      queueSize: Int)
 
 case class AddModelRequest(name: String, dml: String, inputVarName: String,
                            outputVarName: String, weightsDir: String)
@@ -74,11 +76,13 @@ case class PredictionResponse(response: MatrixBlock,
                               var execTime: Long = -1, 
                               var execType: String = "",
                               var batchingTime: Long = -1,
-                              var unbatchingTime: Long = -1)
+                              var unbatchingTime: Long = -1,
+                              var queueWaitTime: Long = -1,
+                              var queueSize: Int = -1)
 
 trait PredictionJsonProtocol extends SprayJsonSupport with DefaultJsonProtocol {
     implicit val predictionRequestExternalFormat = jsonFormat5(PredictionRequestExternal)
-    implicit val predictionResponseExternalFormat = jsonFormat9(PredictionResponseExternal)
+    implicit val predictionResponseExternalFormat = jsonFormat11(PredictionResponseExternal)
 }
 
 trait AddModelJsonProtocol extends SprayJsonSupport with DefaultJsonProtocol {
@@ -345,9 +349,10 @@ object PredictionService extends PredictionJsonProtocol with AddModelJsonProtoco
             PredictionResponseExternal(matAsStr, "csv", response.batchSize, 
                 response.execTime, response.execType, 
                 deserializationTime, serializationTime, 
-                response.batchingTime, response.unbatchingTime)
+                response.batchingTime, response.unbatchingTime,
+                response.queueWaitTime, response.queueSize)
         } else {
-            PredictionResponseExternal("ERROR", "ERROR", -1, -1, "ERROR", -1, -1, -1, -1)
+            PredictionResponseExternal("ERROR", "ERROR", -1, -1, "ERROR", -1, -1, -1, -1, -1, -1)
         }
     }
 
