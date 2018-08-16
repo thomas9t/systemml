@@ -159,7 +159,7 @@ trait Scheduler {
 
     private[serving] def enqueue(request: PredictionRequest, model: Model): Future[PredictionResponse] = Future {
         val schedulingRequest = SchedulingRequest(request, model, new CountDownLatch(1), System.nanoTime())
-        schedulingRequest.queueSize = modelQueues.get(model).size
+        schedulingRequest.queueSize = modelQueues.get(model.name).size
         println("REQUEST RECEIVED FOR: " + model.name)
         requestQueue.add(schedulingRequest)
         modelQueues.get(model.name).add(schedulingRequest)
