@@ -82,7 +82,7 @@ class GpuJmlcExecutor(gCtx: GPUContext, override val scheduler: Scheduler) exten
             val res = script.executeScript(this.gCtx).getMatrixBlock(req.model.outputVarName)
             val computeTime = System.nanoTime() - computeStart
             val unbatchStart = System.nanoTime()
-            val responses = BatchingUtils.unbatchRequests(requests, res, batchingTime, computeTime)
+            responses = BatchingUtils.unbatchRequests(requests, res, batchingTime, computeTime)
             val stop = System.nanoTime()
             scheduler.onCompleteCallback(req.model.name, stop - req.receivedTime, requests.length, "GPU")
             println("DONE EXEC GPU")
@@ -109,7 +109,7 @@ class CpuJmlcExecutor(override val scheduler: Scheduler) extends JmlcExecutor {
             script.setMatrix(req.model.inputVarName, batchedMatrixData, false)
             val computeTime = System.nanoTime() - computeStart
             val res = script.executeScript().getMatrixBlock(req.model.outputVarName)
-            val responses = BatchingUtils.unbatchRequests(requests, res, batchingTime, computeStart)
+            responses = BatchingUtils.unbatchRequests(requests, res, batchingTime, computeStart)
             val stop = System.nanoTime()
             scheduler.onCompleteCallback(req.model.name, stop - req.receivedTime, requests.length, "CPU")
             println("DONE EXEC CPU")
