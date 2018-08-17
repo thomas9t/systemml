@@ -56,7 +56,6 @@ import org.apache.sysml.runtime.instructions.cp.IntObject;
 import org.apache.sysml.runtime.instructions.cp.ScalarObject;
 import org.apache.sysml.runtime.instructions.cp.StringObject;
 import org.apache.sysml.runtime.instructions.gpu.context.GPUContext;
-import org.apache.sysml.runtime.instructions.gpu.context.GPUContextPool;
 import org.apache.sysml.runtime.instructions.gpu.context.GPUObject;
 import org.apache.sysml.runtime.matrix.MatrixCharacteristics;
 import org.apache.sysml.runtime.matrix.MetaDataFormat;
@@ -66,7 +65,6 @@ import org.apache.sysml.runtime.matrix.data.MatrixBlock;
 import org.apache.sysml.runtime.matrix.data.OutputInfo;
 import org.apache.sysml.runtime.util.DataConverter;
 import org.apache.sysml.utils.Explain;
-import org.apache.sysml.utils.NativeHelper;
 import org.apache.sysml.utils.Statistics;
 
 /**
@@ -87,8 +85,8 @@ public class PreparedScript implements ConfigurableAPI
 	private final DMLConfig _dmlconf;
 	private final CompilerConfig _cconf;
 
-	private boolean useGpu = false;
-	
+	private GPUContext _gCtx;
+
 	private PreparedScript(PreparedScript that) {
 		//shallow copy, except for a separate symbol table
 		//and related meta data of reused inputs
@@ -169,13 +167,12 @@ public class PreparedScript implements ConfigurableAPI
 	}
 
 	/**
-	 * Boolean flag indicating if this script requires the GPU. Must be set to "true" if script was compiled
-	 * with GPU
-	 *
-	 * @param enable
+	 * Sets a GPU Context to use when executing GPU enabled scripts. This method must be called prior to
+	 * executing a GPU enabled script.
+	 * @param gCtx GPU context to use
 	 */
-	public void setUseGpu(boolean enable) { useGpu = enable; }
-	
+	public void setGpuContext(GPUContext gCtx) { _gCtx = _gCtx; }
+
 	/**
 	 * Binds a scalar boolean to a registered input variable.
 	 * 
@@ -447,50 +444,22 @@ public class PreparedScript implements ConfigurableAPI
 
 		//create and populate execution context
 		ExecutionContext ec = ExecutionContextFactory.createContext(_vars, _prog);
-
-		//core execute runtime program
-		_prog.execute(ec);
-
-		//cleanup unnecessary outputs
-		_vars.removeAllNotIn(_outVarnames);
-		
-		//construct results
-		ResultVariables rvars = new ResultVariables();
-		for( String ovar : _outVarnames ) {
-			Data tmpVar = _vars.get(ovar);
-			if( tmpVar != null ) {
-				rvars.addResult(ovar, tmpVar);
-			}
+		if (_gCtx != null) {
+			_gCtx.initializeThread();
+			List<GPUContext> gCtxs = new ArrayList<>();
+			gCtxs.add(_gCtx);
+			ec.setGPUContexts(gCtxs);
 		}
-
-		//clear thread-local configurations
-		ConfigurationManager.clearLocalConfigs();
-		return rvars;
-	}
-
-	public ResultVariables executeScript(GPUContext gCtx) {
-		//add reused variables
-		_vars.putAll(_inVarReuse);
-
-		//set thread-local configurations
-		ConfigurationManager.setLocalConfig(_dmlconf);
-		ConfigurationManager.setLocalConfig(_cconf);
-
-		//create and populate execution context
-		ExecutionContext ec = ExecutionContextFactory.createContext(_vars, _prog);
-		gCtx.initializeThread();
-		List<GPUContext> gCtxs = new ArrayList<>();
-		gCtxs.add(gCtx);
-		ec.setGPUContexts(gCtxs);
-
 		//core execute runtime program
 		_prog.execute(ec);
 
-		for (String outVar : _outVarnames) {
-			Data data = ec.getVariable(outVar);
-			GPUObject gpuObj = ((MatrixObject) data).getGPUObject(gCtx);
-			if (gpuObj != null && gpuObj.isDirty()) {
-				gpuObj.acquireHostRead(null);
+		if (_gCtx != null) {
+			for (String outVar : _outVarnames) {
+				Data data = ec.getVariable(outVar);
+				GPUObject gpuObj = ((MatrixObject) data).getGPUObject(_gCtx);
+				if (gpuObj != null && gpuObj.isDirty()) {
+					gpuObj.acquireHostRead(null);
+				}
 			}
 		}
 

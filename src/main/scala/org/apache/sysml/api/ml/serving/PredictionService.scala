@@ -48,45 +48,37 @@ import org.apache.sysml.api.jmlc.PreparedScript
 
 // format: can be file, binary, csv, ijv, jpeg, ...
 
+case class RequestStatistics(var batchSize: Int = -1,
+                             var execTime: Long = -1,
+                             var execType: String = "",
+                             var requestDeserializationTime: Long = -1,
+                             var responseSerializationTime: Long = -1,
+                             var batchingTime: Long = -1,
+                             var unbatchingTime: Long = -1,
+                             var queueWaitTime: Long = -1,
+                             var queueSize: Int = -1)
 case class PredictionRequestExternal(name: String, data: String, format: String, rows: Int, cols: Int)
-case class PredictionResponseExternal(response: String, 
-                                      format: String, 
-                                      batchSize: Int, 
-                                      execTime: Long, 
-                                      execType: String,
-                                      requestDeserializationTime: Long,
-                                      responseSerializationTime: Long,
-                                      batchingTime: Long,
-                                      unbatchingTime: Long,
-                                      queueWaitTime: Long,
-                                      queueSize: Int)
+case class PredictionResponseExternal(response: String, format: String, statistics: RequestStatistics)
 
 case class AddModelRequest(name: String, dml: String, inputVarName: String,
-                           outputVarName: String, weightsDir: String)
+                           outputVarName: String, weightsDir: String, latencyObjective: String)
 
 case class Model(name: String,
-                 script: PreparedScript,
+                 script: Map[String,PreparedScript],
                  inputVarName: String,
                  outputVarName: String,
-                 scriptGpu: PreparedScript = null)
+                 latencyObjective: Duration)
 case class PredictionRequest(data : MatrixBlock, modelName : String, requestSize : Int)
-
-case class PredictionResponse(response: MatrixBlock, 
-                              batchSize: Int, 
-                              var execTime: Long = -1, 
-                              var execType: String = "",
-                              var batchingTime: Long = -1,
-                              var unbatchingTime: Long = -1,
-                              var queueWaitTime: Long = -1,
-                              var queueSize: Int = -1)
+case class PredictionResponse(response: MatrixBlock, batchSize: Int, statistics: RequestStatistics)
 
 trait PredictionJsonProtocol extends SprayJsonSupport with DefaultJsonProtocol {
+    implicit val RequestStatisticsFormat = jsonFormat9(RequestStatistics)
     implicit val predictionRequestExternalFormat = jsonFormat5(PredictionRequestExternal)
-    implicit val predictionResponseExternalFormat = jsonFormat11(PredictionResponseExternal)
+    implicit val predictionResponseExternalFormat = jsonFormat3(PredictionResponseExternal)
 }
 
 trait AddModelJsonProtocol extends SprayJsonSupport with DefaultJsonProtocol {
-    implicit val AddModelRequetFormat = jsonFormat5(AddModelRequest)
+    implicit val AddModelRequetFormat = jsonFormat6(AddModelRequest)
 }
 
 class PredictionService {
@@ -171,6 +163,7 @@ object PredictionService extends PredictionJsonProtocol with AddModelJsonProtoco
         val passwdOption = new org.apache.commons.cli.Option("admin_password", true, "Admin password. Default: admin")
         val helpOption = new org.apache.commons.cli.Option("help", false, "Show usage message")
         val maxSizeOption = new org.apache.commons.cli.Option("max_bytes", true, "Maximum size of request in bytes")
+        val statisticsOption = new org.apache.commons.cli.Option("statistics", true, "Gather statistics on request execution")
 
         // Only port is required option
         portOption.setRequired(true)
@@ -196,8 +189,6 @@ object PredictionService extends PredictionJsonProtocol with AddModelJsonProtoco
             Duration(line.getOptionValue("timeout").toLong, MILLISECONDS) else 300.seconds
         val sizeDirective = if (line.hasOption("max_bytes"))
             withSizeLimit(line.getOptionValue("max_bytes").toLong) else withoutSizeLimit
-        val latencyObjective = if (line.hasOption("latency_objective"))
-            Duration(line.getOptionValue("latency_objective").toLong, MILLISECONDS) else 10.seconds
 
         // Initialize statistics counters
         val numTimeouts = new LongAdder
@@ -209,15 +200,12 @@ object PredictionService extends PredictionJsonProtocol with AddModelJsonProtoco
         var models = Map[String, Model]()
 
         // TODO: Set the scheduler using factory
-        //scheduler = new NoBatching(timeout)
-        scheduler = new BasicBatchingScheduler(timeout, latencyObjective)
-        // scheduler = new NonBatchingScheduler(timeout, latencyObjective)
-        // val gpus = null
+        scheduler = new BasicBatchingScheduler(timeout)
         val gpus = "-1"
-        val numCores = Runtime.getRuntime().availableProcessors() - 1
-        val maxMemory = Runtime.getRuntime().totalMemory()
+        val numCores = Runtime.getRuntime.availableProcessors() - 1
+        val maxMemory = Runtime.getRuntime.totalMemory()
         if (gpus != null)
-            conn.enableGpu(gpus)
+            conn.enableGpu(gpus, true)
         scheduler.start(numCores, maxMemory, gpus)
 
         // Define unsecured routes: /predict and /health
@@ -259,47 +247,12 @@ object PredictionService extends PredictionJsonProtocol with AddModelJsonProtoco
                         }
                     }
                 }
-            } ~
-            path("register-model") {
-                post {
-                    entity(as[AddModelRequest]) { request =>
-                        validate(!models.contains(request.name), "The model is already loaded") {
-                            try {
-                                val weightsMap = processWeights(request.weightsDir)
-                                val inputs = weightsMap.keys.toArray ++ Array[String](request.inputVarName)
-
-                                // compile the model's DML script for execution on CPU - unfortunately this needs
-                                // to be synchronized
-                                conn.synchronized {
-                                    conn.setGpu(false)
-                                    conn.setForceGPU(false)
-                                    val scriptCpu = conn.prepareScript(
-                                        request.dml, inputs, Array(request.outputVarName))
-
-                                    conn.setGpu(true)
-                                    conn.setForceGPU(true)
-                                    val scriptGpu = conn.prepareScript(
-                                        request.dml, inputs, Array(request.outputVarName))
-
-                                    weightsMap.foreach(x => scriptCpu.setMatrix(x._1, x._2, true))
-                                    weightsMap.foreach(x => scriptGpu.setMatrix(x._1, x._2, true))
-
-                                    // now register the created model
-                                    val model = Model(
-                                        request.name, scriptCpu, request.inputVarName, request.outputVarName, scriptGpu)
-                                    models += (request.name -> model)
-                                    scheduler.addModel(model)
-                                }
-                                complete(StatusCodes.OK)
-                            } catch {
-                                case e: Exception => {
-                                    numFailures.increment()
-                                    e.printStackTrace()
-                                    complete(StatusCodes.InternalServerError, "Exception occured while executing the prediction request:" + e.getMessage)
-                                }
-                            }
-                        }
-                    }
+            } ~ path("health") {
+                get {
+                    val stats = "Number of requests (total/completed/timeout/failures):" + currNumRequests.longValue() + "/" + numCompletedPredictions.longValue() + "/"
+                    numTimeouts.longValue() + "/" + numFailures.longValue() + ".\n" +
+                      "Average prediction time:" + ((totalTime.doubleValue() * 1e-6) / numCompletedPredictions.longValue()) + " ms.\n"
+                    complete(StatusCodes.OK, stats)
                 }
             }
         }
@@ -313,12 +266,50 @@ object PredictionService extends PredictionJsonProtocol with AddModelJsonProtoco
                             shutdownService(user, scheduler)
                         }
                     } ~
-                      path("health") {
-                          get {
-                              val stats = "Number of requests (total/completed/timeout/failures):" + currNumRequests.longValue() + "/" + numCompletedPredictions.longValue() + "/"
-                              numTimeouts.longValue() + "/" + numFailures.longValue() + ".\n" +
-                                "Average prediction time:" + ((totalTime.doubleValue() * 1e-6) / numCompletedPredictions.longValue()) + " ms.\n"
-                              complete(StatusCodes.OK, stats)
+                      path("register-model") {
+                          post {
+                              entity(as[AddModelRequest]) { request =>
+                                  validate(!models.contains(request.name), "The model is already loaded") {
+                                      try {
+                                          val weightsMap = processWeights(request.weightsDir)
+                                          val inputs = weightsMap.keys.toArray ++ Array[String](request.inputVarName)
+
+                                          // compile the model's DML script for execution on CPU - unfortunately this needs
+                                          // to be synchronized
+                                          conn.synchronized {
+                                              conn.setGpu(false)
+                                              conn.setForceGPU(false)
+                                              val scriptCpu = conn.prepareScript(
+                                                  request.dml, inputs, Array(request.outputVarName))
+
+                                              conn.setGpu(true)
+                                              conn.setForceGPU(true)
+                                              val scriptGpu = conn.prepareScript(
+                                                  request.dml, inputs, Array(request.outputVarName))
+
+                                              weightsMap.foreach(x => scriptCpu.setMatrix(x._1, x._2, true))
+                                              weightsMap.foreach(x => scriptGpu.setMatrix(x._1, x._2, true))
+
+                                              // now register the created model
+                                              val model = Model(request.name,
+                                                                Map("CPU" -> scriptCpu, "GPU" -> scriptGpu),
+                                                                request.inputVarName,
+                                                                request.outputVarName,
+                                                                Duration(request.latencyObjective))
+                                              models += (request.name -> model)
+                                              scheduler.addModel(model)
+                                          }
+                                          complete(StatusCodes.OK)
+                                      } catch {
+                                          case e: Exception => {
+                                              numFailures.increment()
+                                              e.printStackTrace()
+                                              complete(StatusCodes.InternalServerError,
+                                                  "Exception occured while trying to add model:" + e.getMessage)
+                                          }
+                                      }
+                                  }
+                              }
                           }
                       }
             }
@@ -341,18 +332,18 @@ object PredictionService extends PredictionJsonProtocol with AddModelJsonProtoco
                                   format : String, 
                                   deserializationTime: Long) : PredictionResponseExternal = {
         // TODO: Implement other output types...
-        if (response.response != null) {
+        if (response != null) {
             val start = System.nanoTime()
             val matAsArray = DataConverter.convertToDoubleMatrix(response.response)
             val matAsStr = matAsArray.map {_.mkString(",")}.mkString(Properties.lineSeparator)
             val serializationTime = System.nanoTime() - start
-            PredictionResponseExternal(matAsStr, "csv", response.batchSize, 
-                response.execTime, response.execType, 
-                deserializationTime, serializationTime, 
-                response.batchingTime, response.unbatchingTime,
-                response.queueWaitTime, response.queueSize)
+            if (response.statistics != null) {
+                response.statistics.requestDeserializationTime = deserializationTime
+                response.statistics.responseSerializationTime = serializationTime
+            }
+            PredictionResponseExternal(matAsStr, "csv", response.statistics)
         } else {
-            PredictionResponseExternal("ERROR", "ERROR", -1, -1, "ERROR", -1, -1, -1, -1, -1, -1)
+            PredictionResponseExternal("ERROR", "ERROR", null)
         }
     }
 
