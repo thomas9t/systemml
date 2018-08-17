@@ -3,7 +3,6 @@ import org.apache.sysml.runtime.matrix.data.MatrixBlock
 
 object BatchingUtils {
         def batchRequests(requests: Array[SchedulingRequest]) : MatrixBlock = {
-            val execStartTime = System.nanoTime()
             if (requests.length == 1)
                 return requests(0).request.data
 
@@ -15,6 +14,7 @@ object BatchingUtils {
                 System.arraycopy(req.request.data.getDenseBlockValues, 0, doubles, start, ncol)
                 start += ncol
             }
+            res.setNonZeros(-1)
             res
         }
 
