@@ -18,15 +18,19 @@
  */
 
 package org.apache.sysml.api.ml.serving
-import java.util.concurrent.LinkedBlockingDeque
+import java.util.concurrent.{LinkedBlockingDeque, PriorityBlockingQueue}
 import java.util.concurrent.atomic.LongAdder
 
 import org.apache.sysml.runtime.instructions.gpu.context.GPUContext
 
 
-case class Batch(requests: Array[SchedulingRequest], expectedTime: Long)
+case class Batch(requests: Array[SchedulingRequest], expectedTime: Long, priority: Double) extends Comparable[Batch] {
+    override def compareTo(that: Batch): Int = {
+        this.priority.compareTo(that.priority)
+    }
+}
 
-class BatchQueue(execType: String) extends LinkedBlockingDeque[Batch] {
+class BatchQueue(execType: String) extends PriorityBlockingQueue[Batch] {
     private val expectedExecutionTime = new LongAdder()
 
     def enqueue(batch: Batch) : Unit = {
@@ -38,7 +42,7 @@ class BatchQueue(execType: String) extends LinkedBlockingDeque[Batch] {
 
     def dequeue() : Batch = {
         if (this.isEmpty)
-            return Batch(Array[SchedulingRequest](), -1)
+            return Batch(Array[SchedulingRequest](), -1, -1)
         synchronized {
             val nextBatch = this.poll()
             expectedExecutionTime.add(-1*nextBatch.expectedTime)

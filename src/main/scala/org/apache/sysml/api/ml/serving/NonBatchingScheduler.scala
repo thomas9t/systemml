@@ -15,7 +15,7 @@ class NonBatchingScheduler(override val timeout: Duration) extends Scheduler {
                 ret :+= request
             }
         }
-        Batch(ret, -1)
+        Batch(ret, -1, -1)
     }
 
     /**

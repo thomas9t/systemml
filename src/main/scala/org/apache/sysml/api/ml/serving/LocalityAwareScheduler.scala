@@ -30,7 +30,8 @@ class ExecutorQueueMananger(scheduler: BatchingScheduler) extends Runnable {
                         }
                         assert(requests.nonEmpty, "Something is Wrong - Requests should not be empty")
                         val nextBatch = Batch(
-                            requests, scheduler.getExpectedExecutionTime(m, requests.length, queue.getExecType))
+                            requests, scheduler.getExpectedExecutionTime(m, requests.length, queue.getExecType),
+                            requests(0).receivedTime - System.nanoTime())
                         queue.enqueue(nextBatch)
                         println("DONE ROUTING")
                     }
@@ -57,7 +58,7 @@ class LocalityAwareScheduler(override val timeout: Duration) extends BatchingSch
     }
 
     override def schedule(executor: JmlcExecutor) : Batch = {
-        var batch = Batch(Array[SchedulingRequest](), -1)
+        var batch = Batch(Array[SchedulingRequest](), -1, -1)
         val localQueue = executorQueues.get(executor)
         if (localQueue.size() > 0 || globalSchedulingQueues.get(executor.getExecType).size() > 0) {
             println("TRYING TO SCHEDULE")

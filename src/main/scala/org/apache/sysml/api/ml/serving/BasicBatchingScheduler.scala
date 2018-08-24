@@ -33,7 +33,7 @@ class BasicBatchingScheduler(override val timeout: Duration) extends BatchingSch
                 }
             }
         }
-        Batch(ret, -1)
+        Batch(ret, -1, -1)
     }
 
     /**
