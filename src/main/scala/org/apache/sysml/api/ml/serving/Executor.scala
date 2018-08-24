@@ -63,15 +63,18 @@ class JmlcExecutor(scheduler: Scheduler, execType: String, gCtx: GPUContext) ext
     def getExecType: String = { execType }
 
     def run(): Unit = {
+        Thread.sleep(1000)
+        println("EXECUTOR IS STARTING")
         while (!_shouldShutdown) {
             val batch = scheduler.schedule(this)
             if (batch.requests.nonEmpty) {
+                println("EXEC BATCH")
                 val responses = execute(batch.requests)
                 for ((req, resp) <- batch.requests zip responses) {
                     req.response = resp
                     req.latch.countDown()
                 }
-                println("")
+                println("DONE EXEC BATCH")
             }
         }
     }
@@ -79,37 +82,23 @@ class JmlcExecutor(scheduler: Scheduler, execType: String, gCtx: GPUContext) ext
     def execute(requests: Array[SchedulingRequest]): Array[PredictionResponse] = {
         var responses = Array[PredictionResponse]()
         if (requests.nonEmpty) {
-            println("EXEC1")
             val start = System.nanoTime()
-            println("EXEC2")
             val batchedMatrixData = BatchingUtils.batchRequests(requests)
-            println("EXEC3")
             val batchingTime = System.nanoTime() - start
             val req = requests(0)
-            println("EXEC4")
             val script = req.model.script(execType).clone(false)
-            println("EXEC5")
             script.setGpuContext(gCtx)
-            println("EXEC6")
             script.setMatrix(req.model.inputVarName, batchedMatrixData, false)
-            println("EXEC7")
             val execStart = System.nanoTime()
-            println("EXEC8")
             val res = script.executeScript().getMatrixBlock(req.model.outputVarName)
-            println("EXEC9")
             val execTime = System.nanoTime() - execStart
-            println("EXEC10")
             responses = BatchingUtils.unbatchRequests(requests, res)
-            println("EXEC11")
             val stop = System.nanoTime()
-            println("EXEC12")
             scheduler.onCompleteCallback(req.model.name, stop - req.receivedTime, requests.length, execType)
-            println("EXEC13")
             if (req.statistics != null)
                 setStatistics(requests, start, batchingTime, execTime)
             if (prevModel.nonEmpty)
                 prevModel = req.model.name
-            println("EXEC14")
         }
         responses
     }

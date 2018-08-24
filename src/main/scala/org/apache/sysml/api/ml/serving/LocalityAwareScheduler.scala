@@ -19,6 +19,7 @@ class ExecutorQueueMananger(scheduler: BatchingScheduler) extends Runnable {
                     x => scheduler.getSchedulableModels(x)).reduce(_ union _)
                 if (schedulableModels.nonEmpty) {
                     for (m <- schedulableModels) {
+                        println("BEGIN ROUTING")
                         val queue = getLowestUtilizationQueue(m)
                         var requests = Array[SchedulingRequest]()
                         val nextBatchSize = min(scheduler.modelQueues.get(m).size(),
@@ -31,6 +32,7 @@ class ExecutorQueueMananger(scheduler: BatchingScheduler) extends Runnable {
                         val nextBatch = Batch(
                             requests, scheduler.getExpectedExecutionTime(m, requests.length, queue.getExecType))
                         queue.enqueue(nextBatch)
+                        println("DONE ROUTING")
                     }
                 }
             }
@@ -58,20 +60,24 @@ class LocalityAwareScheduler(override val timeout: Duration) extends BatchingSch
         var batch = Batch(Array[SchedulingRequest](), -1)
         val localQueue = executorQueues.get(executor)
         if (localQueue.size() > 0 || globalSchedulingQueues.get(executor.getExecType).size() > 0) {
+            println("TRYING TO SCHEDULE")
             dummyResponse.synchronized {
+                println("BEGIN SCHEDULE ACTUAL")
                 if (localQueue.size() > 0 || globalSchedulingQueues.get(executor.getExecType).size() > 0) {
-                        val localExecTime = localQueue.getExpectedExecutionTime
-                        val globalExecTime = globalSchedulingQueues.get(executor.getExecType).getExpectedExecutionTime
-                        if (localExecTime >= globalExecTime) {
-                            batch = localQueue.dequeue()
-                        } else {
-                            batch = globalSchedulingQueues.get(executor.getExecType).dequeue()
-                        }
-                        if (executor.prevModel.nonEmpty) {
-                            unsetModelLocality(batch.requests.last.model.name, localQueue)
-                        }
-                        setModelLocality(batch.requests.last.model.name, localQueue)
+                    val localExecTime = localQueue.getExpectedExecutionTime
+                    val globalExecTime = globalSchedulingQueues.get(executor.getExecType).getExpectedExecutionTime
+                    if (localExecTime >= globalExecTime) {
+                        batch = localQueue.dequeue()
+                    } else {
+                        batch = globalSchedulingQueues.get(executor.getExecType).dequeue()
                     }
+                    assert(batch.requests.nonEmpty, "Something is wrong - got empty batch")
+                    if (executor.prevModel.nonEmpty) {
+                        unsetModelLocality(batch.requests.last.model.name, localQueue)
+                    }
+                    setModelLocality(batch.requests.last.model.name, localQueue)
+                }
+                println("DONE SCHEDULE ACTUAL")
             }
         }
         batch
@@ -85,12 +91,14 @@ class LocalityAwareScheduler(override val timeout: Duration) extends BatchingSch
       * @return
       */
     override private[serving] def enqueue(request: PredictionRequest, model: Model): Future[PredictionResponse] = Future {
+        println("ENQUEUEING REQUEST FOR: " + model.name)
         val statistics = if (_statistics) RequestStatistics() else null
         val schedulingRequest = SchedulingRequest(
             request, model, new CountDownLatch(1), System.nanoTime(), null, statistics)
         statistics.queueSize = modelQueues.get(model.name).size
         requestQueue.add(schedulingRequest)
         modelQueues.get(model.name).add(schedulingRequest)
+        println("DONE ENQUEUING")
 
         try {
             schedulingRequest.latch.await(timeout.length, timeout.unit)
