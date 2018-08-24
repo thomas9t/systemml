@@ -3,9 +3,9 @@ import org.apache.sysml.runtime.matrix.data.MatrixBlock
 
 object BatchingUtils {
         def batchRequests(requests: Array[SchedulingRequest]) : MatrixBlock = {
-            if (requests.length == 1)
+            if (requests.length == 1) {
                 return requests(0).request.data
-
+            }
             val ncol = requests(0).request.data.getNumColumns
             val res = new MatrixBlock(requests.length, ncol, -1).allocateDenseBlock()
             val doubles = res.getDenseBlockValues

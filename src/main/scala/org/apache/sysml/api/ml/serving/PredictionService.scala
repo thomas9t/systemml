@@ -146,7 +146,6 @@ object PredictionService extends PredictionJsonProtocol with AddModelJsonProtoco
     val basicConf = ConfigFactory.load()
     val combined = customConf.withFallback(basicConf)
     implicit val system = ActorSystem("systemml-prediction-service", ConfigFactory.load(combined))
-    println(system.settings.config.root.render())
     implicit val materializer = ActorMaterializer()
     implicit val executionContext = system.dispatcher
     implicit val timeout = akka.util.Timeout(300.seconds)
@@ -200,8 +199,8 @@ object PredictionService extends PredictionJsonProtocol with AddModelJsonProtoco
         var models = Map[String, Model]()
 
         // TODO: Set the scheduler using factory
-        scheduler = new BasicBatchingScheduler(timeout)
-        val gpus = "-1"
+        scheduler = new LocalityAwareScheduler(timeout)
+        val gpus = null
         val numCores = Runtime.getRuntime.availableProcessors() - 1
         val maxMemory = Runtime.getRuntime.totalMemory()
         if (gpus != null)
