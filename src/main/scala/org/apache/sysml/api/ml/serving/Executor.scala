@@ -18,13 +18,13 @@
  */
 
 package org.apache.sysml.api.ml.serving
-import java.util.concurrent.{LinkedBlockingDeque, PriorityBlockingQueue}
+import java.util.concurrent.PriorityBlockingQueue
 import java.util.concurrent.atomic.LongAdder
 
 import org.apache.sysml.runtime.instructions.gpu.context.GPUContext
 
 
-case class Batch(requests: Array[SchedulingRequest], expectedTime: Long, priority: Double) extends Comparable[Batch] {
+case class Batch(size: Int, expectedTime: Long, priority: Double, modelName: String) extends Comparable[Batch] {
     override def compareTo(that: Batch): Int = {
         this.priority.compareTo(that.priority)
     }
@@ -42,7 +42,7 @@ class BatchQueue(execType: String) extends PriorityBlockingQueue[Batch] {
 
     def dequeue() : Batch = {
         if (this.isEmpty)
-            return Batch(Array[SchedulingRequest](), -1, -1)
+            return Batch(-1, -1, -1, null)
         synchronized {
             val nextBatch = this.poll()
             expectedExecutionTime.add(-1*nextBatch.expectedTime)
@@ -70,11 +70,11 @@ class JmlcExecutor(scheduler: Scheduler, execType: String, gCtx: GPUContext) ext
         Thread.sleep(1000)
         println("EXECUTOR IS STARTING")
         while (!_shouldShutdown) {
-            val batch = scheduler.schedule(this)
-            if (batch.requests.nonEmpty) {
+            val requests = scheduler.schedule(this)
+            if (requests.nonEmpty) {
                 println("EXEC BATCH")
-                val responses = execute(batch.requests)
-                for ((req, resp) <- batch.requests zip responses) {
+                val responses = execute(requests)
+                for ((req, resp) <- requests zip responses) {
                     req.response = resp
                     req.latch.countDown()
                 }

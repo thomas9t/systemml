@@ -14,24 +14,20 @@ class ExecutorQueueMananger(scheduler: BatchingScheduler) extends Runnable {
     override def run() : Unit = {
         println("Hi From Executor Queue Manager!")
         while (!_shutDown) {
-            scheduler.synchronized {
+            scheduler.dummyResponse.synchronized {
                 val schedulableModels = scheduler.executorTypes.map(
                     x => scheduler.getSchedulableModels(x)).reduce(_ union _)
                 if (schedulableModels.nonEmpty) {
                     for (m <- schedulableModels) {
                         println("BEGIN ROUTING")
                         val queue = getLowestUtilizationQueue(m)
-                        var requests = Array[SchedulingRequest]()
                         val nextBatchSize = min(scheduler.modelQueues.get(m).size(),
                             scheduler.getOptimalBatchSize(m, queue.getExecType))
-                        for (_ <- 0 until nextBatchSize) {
-                            val nextRequest = scheduler.modelQueues.get(m).poll()
-                            requests :+= nextRequest
-                        }
-                        assert(requests.nonEmpty, "Something is Wrong - Requests should not be empty")
+                        val nextRequest = scheduler.modelQueues.get(m).peek()
+                        assert(nextBatchSize > 0, "Something is wrong - batch size should not be zero")
                         val nextBatch = Batch(
-                            requests, scheduler.getExpectedExecutionTime(m, requests.length, queue.getExecType),
-                            requests(0).receivedTime - System.nanoTime())
+                            nextBatchSize, scheduler.getExpectedExecutionTime(m, nextBatchSize, queue.getExecType),
+                            nextRequest.receivedTime - System.nanoTime(), nextRequest.model.name)
                         queue.enqueue(nextBatch)
                         println("DONE ROUTING")
                     }
@@ -57,31 +53,34 @@ class LocalityAwareScheduler(override val timeout: Duration) extends BatchingSch
         queueManager.start()
     }
 
-    override def schedule(executor: JmlcExecutor) : Batch = {
-        var batch = Batch(Array[SchedulingRequest](), -1, -1)
+    override def schedule(executor: JmlcExecutor) : Array[SchedulingRequest] = {
+        var ret = Array[SchedulingRequest]()
         val localQueue = executorQueues.get(executor)
         if (localQueue.size() > 0 || globalSchedulingQueues.get(executor.getExecType).size() > 0) {
-            println("TRYING TO SCHEDULE")
             dummyResponse.synchronized {
                 println("BEGIN SCHEDULE ACTUAL")
                 if (localQueue.size() > 0 || globalSchedulingQueues.get(executor.getExecType).size() > 0) {
                     val localExecTime = localQueue.getExpectedExecutionTime
                     val globalExecTime = globalSchedulingQueues.get(executor.getExecType).getExpectedExecutionTime
-                    if (localExecTime >= globalExecTime) {
-                        batch = localQueue.dequeue()
-                    } else {
-                        batch = globalSchedulingQueues.get(executor.getExecType).dequeue()
+                    val batch = if (localExecTime >= globalExecTime)
+                        localQueue.dequeue() else  globalSchedulingQueues.get(executor.getExecType).dequeue()
+                    val numToDequeue = min(batch.size, modelQueues.get(batch.modelName).size())
+                    if (numToDequeue > 0) {
+                        for (_ <- 0 until numToDequeue) {
+                            ret :+= modelQueues.get(batch.modelName).poll()
+                            assert(ret != null, "Something is wrong - request should not be null!")
+                        }
+
+                        if (executor.prevModel.nonEmpty) {
+                            unsetModelLocality(batch.modelName, localQueue)
+                        }
+                        setModelLocality(batch.modelName, localQueue)
                     }
-                    assert(batch.requests.nonEmpty, "Something is wrong - got empty batch")
-                    if (executor.prevModel.nonEmpty) {
-                        unsetModelLocality(batch.requests.last.model.name, localQueue)
-                    }
-                    setModelLocality(batch.requests.last.model.name, localQueue)
                 }
                 println("DONE SCHEDULE ACTUAL")
             }
         }
-        batch
+        ret
     }
 
     /**

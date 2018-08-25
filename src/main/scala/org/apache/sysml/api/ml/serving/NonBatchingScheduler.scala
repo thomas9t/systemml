@@ -7,7 +7,7 @@ import scala.concurrent.duration.Duration
 
 class NonBatchingScheduler(override val timeout: Duration) extends Scheduler {
 
-    override def schedule(executor: JmlcExecutor): Batch = {
+    override def schedule(executor: JmlcExecutor): Array[SchedulingRequest] = {
         var ret = Array[SchedulingRequest]()
         dummyResponse.synchronized {
             if (requestQueue.size() > 0) {
@@ -15,7 +15,7 @@ class NonBatchingScheduler(override val timeout: Duration) extends Scheduler {
                 ret :+= request
             }
         }
-        Batch(ret, -1, -1)
+        ret
     }
 
     /**

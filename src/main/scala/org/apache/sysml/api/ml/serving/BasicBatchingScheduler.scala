@@ -13,7 +13,7 @@ class BasicBatchingScheduler(override val timeout: Duration) extends BatchingSch
       * @param executor an Executor instance
       * @return a list of model requests to process
       */
-    override def schedule(executor: JmlcExecutor) : Batch = {
+    override def schedule(executor: JmlcExecutor) : Array[SchedulingRequest] = {
         var ret = Array[SchedulingRequest]()
         if (requestQueue.size() > 0) {
             val execType = executor.getExecType
@@ -33,7 +33,7 @@ class BasicBatchingScheduler(override val timeout: Duration) extends BatchingSch
                 }
             }
         }
-        Batch(ret, -1, -1)
+        ret
     }
 
     /**

@@ -70,7 +70,7 @@ trait Scheduler {
         executorService.shutdown()
     }
 
-    def schedule(executor: JmlcExecutor): Batch
+    def schedule(executor: JmlcExecutor): Array[SchedulingRequest]
 
     /**
       * Registers a model with this scheduler. This should be called before enqueueing requests
