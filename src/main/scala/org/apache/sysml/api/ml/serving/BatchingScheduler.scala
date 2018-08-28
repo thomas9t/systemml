@@ -7,6 +7,7 @@ import scala.math.floor
 trait BatchingScheduler extends Scheduler {
 
     val modelBatchSizes = new ConcurrentHashMap[String, ConcurrentHashMap[String,Int]]()
+    val execTimeEstimators = new ConcurrentHashMap[String, ConcurrentHashMap[String,RLSEstimator]]()
 
     def getOptimalBatchSize(model : String, execType: String) : Int = {
         modelBatchSizes.putIfAbsent(execType, new ConcurrentHashMap[String,Int]())
@@ -26,9 +27,14 @@ trait BatchingScheduler extends Scheduler {
                     if (latency < latencyObjective.toNanos) prevSize+2 else floor(prevSize*0.90).toInt)
             })
         }
+//        execTimeEstimators.putIfAbsent(model, new ConcurrentHashMap[String,RLSEstimator]())
+//        execTimeEstimators.get(model).putIfAbsent(execType, new RLSEstimator)
+//        execTimeEstimators.get(model).get(execType).enqueueExample(batchSize, latency)
     }
 
-    def getExpectedExecutionTime(model: String, batchSize: Int, execType: String) : Long = { 2L }
+    def getExpectedExecutionTime(model: String, batchSize: Int, execType: String) : Long = {
+        latencyObjectives.get(model).toNanos
+    }
 
     /**
       * Gets a list of models that are eligible to be run. A model is eligible to be run if it

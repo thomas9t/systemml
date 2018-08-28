@@ -314,12 +314,28 @@ public class PreparedScript implements ConfigurableAPI
 		mo.acquireModify(matrix); 
 		mo.release();
 		
-		//put create matrix wrapper into symbol table
-		_vars.put(varname, mo);
+		setMatrix(varname, mo, reuse);
+	}
+
+	/**
+	 * Binds a matrix object to a registered input variable.
+	 * If reuse requested, then the input is guaranteed to be
+	 * preserved over multiple <code>executeScript</code> calls.
+	 *
+	 * @param varname input variable name
+	 * @param matrix matrix represented as a MatrixObject
+	 * @param reuse if {@code true}, preserve value over multiple {@code executeScript} calls
+	 */
+	public void setMatrix(String varname, MatrixObject matrix, boolean reuse) {
+		if( !_inVarnames.contains(varname) )
+			throw new DMLException("Unspecified input variable: "+ varname);
+
+		_vars.put(varname, matrix);
 		if( reuse ) {
-			mo.enableCleanup(false); //prevent cleanup
-			_inVarReuse.put(varname, mo);
+			matrix.enableCleanup(false); //prevent cleanup
+			_inVarReuse.put(varname, matrix);
 		}
+
 	}
 
 	/**

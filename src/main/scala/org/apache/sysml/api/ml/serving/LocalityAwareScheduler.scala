@@ -19,7 +19,6 @@ class ExecutorQueueMananger(scheduler: BatchingScheduler) extends Runnable {
                     x => scheduler.getSchedulableModels(x)).reduce(_ union _)
                 if (schedulableModels.nonEmpty) {
                     for (m <- schedulableModels) {
-                        println("BEGIN ROUTING")
                         val queue = getLowestUtilizationQueue(m)
                         val nextBatchSize = min(scheduler.modelQueues.get(m).size(),
                             scheduler.getOptimalBatchSize(m, queue.getExecType))
@@ -29,7 +28,6 @@ class ExecutorQueueMananger(scheduler: BatchingScheduler) extends Runnable {
                             nextBatchSize, scheduler.getExpectedExecutionTime(m, nextBatchSize, queue.getExecType),
                             nextRequest.receivedTime - System.nanoTime(), nextRequest.model.name)
                         queue.enqueue(nextBatch)
-                        println("DONE ROUTING")
                     }
                 }
             }
@@ -58,7 +56,6 @@ class LocalityAwareScheduler(override val timeout: Duration) extends BatchingSch
         val localQueue = executorQueues.get(executor)
         if (localQueue.size() > 0 || globalSchedulingQueues.get(executor.getExecType).size() > 0) {
             dummyResponse.synchronized {
-                println("BEGIN SCHEDULE ACTUAL")
                 if (localQueue.size() > 0 || globalSchedulingQueues.get(executor.getExecType).size() > 0) {
                     val localExecTime = localQueue.getExpectedExecutionTime
                     val globalExecTime = globalSchedulingQueues.get(executor.getExecType).getExpectedExecutionTime
@@ -77,7 +74,6 @@ class LocalityAwareScheduler(override val timeout: Duration) extends BatchingSch
                         setModelLocality(batch.modelName, localQueue)
                     }
                 }
-                println("DONE SCHEDULE ACTUAL")
             }
         }
         ret
@@ -91,14 +87,12 @@ class LocalityAwareScheduler(override val timeout: Duration) extends BatchingSch
       * @return
       */
     override private[serving] def enqueue(request: PredictionRequest, model: Model): Future[PredictionResponse] = Future {
-        println("ENQUEUEING REQUEST FOR: " + model.name)
         val statistics = if (_statistics) RequestStatistics() else null
         val schedulingRequest = SchedulingRequest(
             request, model, new CountDownLatch(1), System.nanoTime(), null, statistics)
         statistics.queueSize = modelQueues.get(model.name).size
         requestQueue.add(schedulingRequest)
         modelQueues.get(model.name).add(schedulingRequest)
-        println("DONE ENQUEUING")
 
         try {
             schedulingRequest.latch.await(timeout.length, timeout.unit)

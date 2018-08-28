@@ -31,7 +31,6 @@ import org.apache.commons.cli.PosixParser
 import com.typesafe.config.ConfigFactory
 
 import scala.concurrent.duration._
-import java.util.concurrent._
 import java.util.HashMap
 
 import akka.http.scaladsl.marshallers.sprayjson.SprayJsonSupport
@@ -64,12 +63,14 @@ case class AddModelRequest(name: String, dml: String, inputVarName: String,
                            outputVarName: String, weightsDir: String, latencyObjective: String)
 
 case class Model(name: String,
-                 script: Map[String,PreparedScript],
+                 script: Map[String, PreparedScript],
                  inputVarName: String,
                  outputVarName: String,
-                 latencyObjective: Duration)
+                 latencyObjective: Duration,
+                 weightFiles: Map[String,String])
 case class PredictionRequest(data : MatrixBlock, modelName : String, requestSize : Int)
 case class PredictionResponse(response: MatrixBlock, batchSize: Int, statistics: RequestStatistics)
+case class MatrixBlockContainer(numRows: Long, numCols: Long, nnz: Long, sum: Double, data: MatrixBlock)
 
 trait PredictionJsonProtocol extends SprayJsonSupport with DefaultJsonProtocol {
     implicit val RequestStatisticsFormat = jsonFormat9(RequestStatistics)
@@ -153,6 +154,7 @@ object PredictionService extends PredictionJsonProtocol with AddModelJsonProtoco
     var bindingFuture: Future[Http.ServerBinding] = null
     var scheduler: Scheduler = null
     val conn = new Connection()
+    var existantMatrixBlocks = Array[MatrixBlockContainer]()
 
     def getCommandLineOptions(): org.apache.commons.cli.Options = {
         val hostOption = new org.apache.commons.cli.Option("ip", true, "IP address")
@@ -201,8 +203,8 @@ object PredictionService extends PredictionJsonProtocol with AddModelJsonProtoco
         // TODO: Set the scheduler using factory
         scheduler = new LocalityAwareScheduler(timeout)
         val gpus = null
-//        val numCores = Runtime.getRuntime.availableProcessors() - 1
-        val numCores = 1
+        val numCores = Runtime.getRuntime.availableProcessors() - 1
+//        val numCores = 2
         val maxMemory = Runtime.getRuntime.totalMemory()
         if (gpus != null)
             conn.enableGpu(gpus, true)
@@ -287,15 +289,12 @@ object PredictionService extends PredictionJsonProtocol with AddModelJsonProtoco
                                               val scriptGpu = conn.prepareScript(
                                                   request.dml, inputs, Array(request.outputVarName))
 
-                                              weightsMap.foreach(x => scriptCpu.setMatrix(x._1, x._2, true))
-                                              weightsMap.foreach(x => scriptGpu.setMatrix(x._1, x._2, true))
-
                                               // now register the created model
                                               val model = Model(request.name,
                                                                 Map("CPU" -> scriptCpu, "GPU" -> scriptGpu),
                                                                 request.inputVarName,
                                                                 request.outputVarName,
-                                                                Duration(request.latencyObjective))
+                                                                Duration(request.latencyObjective), weightsMap)
                                               models += (request.name -> model)
                                               scheduler.addModel(model)
                                           }
@@ -347,15 +346,14 @@ object PredictionService extends PredictionJsonProtocol with AddModelJsonProtoco
         }
     }
 
-    def processWeights(dirname: String) : Map[String,MatrixBlock] = {
+    def processWeights(dirname: String) : Map[String, String] = {
         val dir = new File(dirname)
         if (!(dir.exists && dir.isDirectory))
             throw new Exception("Weight directory: " + dirname + " is invalid")
 
-        // TODO: Add logic to determine if Scheduler has enough space to load this model
         val weightMap = new File(dirname).listFiles().filter(_.isFile).
-            map(_.toString).filter(x => x.slice(x.length-3,x.length) == "mtd").
-          map(x => getNameFromPath(x) -> conn.readMatrix(x.replace(".mtd", ""))).toMap
+            map(_.toString).filter(x => x.slice(x.length-3, x.length) != "mtd").
+          map(x => getNameFromPath(x) -> x).toMap
         weightMap
     }
 
