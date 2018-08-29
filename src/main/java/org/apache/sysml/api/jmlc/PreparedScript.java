@@ -171,7 +171,7 @@ public class PreparedScript implements ConfigurableAPI
 	 * executing a GPU enabled script.
 	 * @param gCtx GPU context to use
 	 */
-	public void setGpuContext(GPUContext gCtx) { _gCtx = _gCtx; }
+	public void setGpuContext(GPUContext gCtx) { _gCtx = gCtx; }
 
 	/**
 	 * Binds a scalar boolean to a registered input variable.
@@ -303,7 +303,7 @@ public class PreparedScript implements ConfigurableAPI
 	 */
 	public void setMatrix(String varname, MatrixBlock matrix, boolean reuse) {
 		if( !_inVarnames.contains(varname) )
-			throw new DMLException("Unspecified input variable: "+varname);
+			throw new DMLException("Unspecified input variable: " + varname);
 				
 		int blocksize = ConfigurationManager.getBlocksize();
 		
