@@ -40,7 +40,7 @@ trait Scheduler {
     protected var _statistics = true
     implicit val ec : ExecutionContext = ExecutionContext.fromExecutor(Executors.newFixedThreadPool(10000))
     var executorTypes = Array[String]()
-    var modelCache : ModelCache = _
+    var modelManager : ModelManager = BasicModelManager
 
     def start(numCores: Int, cpuMemoryBudgetInBytes: Long, gpus: String): Unit = {
         val gCtxs = if (gpus != null) GPUContextPool.reserveAllGPUContexts() else null
@@ -64,7 +64,6 @@ trait Scheduler {
             executorService.submit(exec)
         }
 
-        modelCache = new ModelCache(cpuMemoryBudgetInBytes)
         executorTypes.foreach{x => globalSchedulingQueues.put(x, new BatchQueue(x))}
     }
 
@@ -87,7 +86,7 @@ trait Scheduler {
             localitySet.put(globalSchedulingQueues.get(globalQueueTypes.nextElement()), true)
 
         modelLocality.put(model.name, localitySet)
-        modelCache.put(model)
+        modelManager.put(model)
     }
 
     /**

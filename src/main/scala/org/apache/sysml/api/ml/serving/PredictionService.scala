@@ -67,7 +67,8 @@ case class Model(name: String,
                  inputVarName: String,
                  outputVarName: String,
                  latencyObjective: Duration,
-                 weightFiles: Map[String,String])
+                 weightFiles: Map[String,String],
+                 memoryEstimator: Int => Long)
 case class PredictionRequest(data : MatrixBlock, modelName : String, requestSize : Int)
 case class PredictionResponse(response: MatrixBlock, batchSize: Int, statistics: RequestStatistics)
 case class MatrixBlockContainer(numRows: Long, numCols: Long, nnz: Long, sum: Double, data: MatrixBlock)
@@ -294,7 +295,8 @@ object PredictionService extends PredictionJsonProtocol with AddModelJsonProtoco
                                                                 Map("CPU" -> scriptCpu, "GPU" -> scriptGpu),
                                                                 request.inputVarName,
                                                                 request.outputVarName,
-                                                                Duration(request.latencyObjective), weightsMap)
+                                                                Duration(request.latencyObjective), weightsMap,
+                                                                (batchSize: Int) => 0*batchSize)
                                               models += (request.name -> model)
                                               scheduler.addModel(model)
                                           }

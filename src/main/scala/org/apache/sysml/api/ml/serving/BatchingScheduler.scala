@@ -27,9 +27,7 @@ trait BatchingScheduler extends Scheduler {
                     if (latency < latencyObjective.toNanos) prevSize+2 else floor(prevSize*0.90).toInt)
             })
         }
-//        execTimeEstimators.putIfAbsent(model, new ConcurrentHashMap[String,RLSEstimator]())
-//        execTimeEstimators.get(model).putIfAbsent(execType, new RLSEstimator)
-//        execTimeEstimators.get(model).get(execType).enqueueExample(batchSize, latency)
+
     }
 
     def getExpectedExecutionTime(model: String, batchSize: Int, execType: String) : Long = {

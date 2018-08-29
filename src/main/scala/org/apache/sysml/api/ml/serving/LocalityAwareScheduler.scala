@@ -1,6 +1,7 @@
 package org.apache.sysml.api.ml.serving
 
 import java.util.concurrent.CountDownLatch
+import java.util.concurrent.atomic.LongAdder
 
 import scala.concurrent.Future
 import scala.math.min
@@ -44,9 +45,14 @@ class ExecutorQueueMananger(scheduler: BatchingScheduler) extends Runnable {
 
 class LocalityAwareScheduler(override val timeout: Duration) extends BatchingScheduler {
     var queueManager : Thread = _
+    val availableCpuMemory = new LongAdder()
 
     override def start(numCores: Int, cpuMemoryBudgetInBytes: Long, gpus: String): Unit = {
         super.start(numCores, cpuMemoryBudgetInBytes, gpus)
+        //availableCpuMemory.add((cpuMemoryBudgetInBytes*0.90).toLong)
+
+        modelManager = ReferenceCountedModelManager
+        availableCpuMemory.add(0)
         queueManager = new Thread(new ExecutorQueueMananger(this))
         queueManager.start()
     }
@@ -54,6 +60,7 @@ class LocalityAwareScheduler(override val timeout: Duration) extends BatchingSch
     override def schedule(executor: JmlcExecutor) : Array[SchedulingRequest] = {
         var ret = Array[SchedulingRequest]()
         val localQueue = executorQueues.get(executor)
+
         if (localQueue.size() > 0 || globalSchedulingQueues.get(executor.getExecType).size() > 0) {
             dummyResponse.synchronized {
                 if (localQueue.size() > 0 || globalSchedulingQueues.get(executor.getExecType).size() > 0) {
@@ -61,7 +68,9 @@ class LocalityAwareScheduler(override val timeout: Duration) extends BatchingSch
                     val globalExecTime = globalSchedulingQueues.get(executor.getExecType).getExpectedExecutionTime
                     val batch = if (localExecTime >= globalExecTime)
                         localQueue.dequeue() else  globalSchedulingQueues.get(executor.getExecType).dequeue()
-                    val numToDequeue = min(batch.size, modelQueues.get(batch.modelName).size())
+                    val model = modelManager.get(batch.modelName)
+                    val numToDequeue = getLargestPossibleBatchSize(
+                        min(batch.size, modelQueues.get(batch.modelName).size()), model.memoryEstimator)
                     if (numToDequeue > 0) {
                         for (_ <- 0 until numToDequeue) {
                             ret :+= modelQueues.get(batch.modelName).poll()
@@ -77,6 +86,24 @@ class LocalityAwareScheduler(override val timeout: Duration) extends BatchingSch
             }
         }
         ret
+    }
+
+    /**
+      * Returns the largest possible batch size which can be executed given the currently available
+      * memory
+      * @param b desired batch size
+      * @param memUseEstimator function which estimates memory use given a batch size
+      * @return the largest batch size less than or equal to b which does not exceed available memory
+      */
+    def getLargestPossibleBatchSize(b: Int, memUseEstimator: Int => Long): Int = {
+        val lb = memUseEstimator(b)
+        val ub = memUseEstimator(b+1)
+        val limit = availableCpuMemory.longValue()
+        if (ub < limit)
+            return getLargestPossibleBatchSize(b*2, memUseEstimator)
+        if (lb > limit)
+            return getLargestPossibleBatchSize(b/2, memUseEstimator)
+        b
     }
 
     /**
@@ -98,7 +125,7 @@ class LocalityAwareScheduler(override val timeout: Duration) extends BatchingSch
             schedulingRequest.latch.await(timeout.length, timeout.unit)
             schedulingRequest.response
         } catch {
-            case e : scala.concurrent.TimeoutException => dummyResponse
+            case _ : scala.concurrent.TimeoutException => dummyResponse
         }
     }
 }

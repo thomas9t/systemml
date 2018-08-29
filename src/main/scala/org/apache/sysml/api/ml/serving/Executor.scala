@@ -90,7 +90,7 @@ class JmlcExecutor(scheduler: Scheduler, execType: String, gCtx: GPUContext) ext
             val batchedMatrixData = BatchingUtils.batchRequests(requests)
             val batchingTime = System.nanoTime() - start
             val req = requests(0)
-            val script = scheduler.modelCache.acquire(req.model.name, execType).clone(false)
+            val script = scheduler.modelManager.acquire(req.model.name, execType).clone(false)
             script.setGpuContext(gCtx)
             script.setMatrix(req.model.inputVarName, batchedMatrixData, false)
             val execStart = System.nanoTime()
@@ -98,7 +98,7 @@ class JmlcExecutor(scheduler: Scheduler, execType: String, gCtx: GPUContext) ext
             val execTime = System.nanoTime() - execStart
             responses = BatchingUtils.unbatchRequests(requests, res)
             val stop = System.nanoTime()
-            scheduler.modelCache.release(req.model.name)
+            scheduler.modelManager.release(req.model.name)
             scheduler.onCompleteCallback(req.model.name, stop - req.receivedTime, requests.length, execType)
             if (req.statistics != null)
                 setStatistics(requests, start, batchingTime, execTime)
