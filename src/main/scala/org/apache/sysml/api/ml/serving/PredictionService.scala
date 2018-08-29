@@ -203,9 +203,8 @@ object PredictionService extends PredictionJsonProtocol with AddModelJsonProtoco
 
         // TODO: Set the scheduler using factory
         scheduler = new LocalityAwareScheduler(timeout)
-        val gpus = null
+        val gpus = "-1"
         val numCores = Runtime.getRuntime.availableProcessors() - 1
-//        val numCores = 2
         val maxMemory = Runtime.getRuntime.totalMemory()
         if (gpus != null)
             conn.enableGpu(gpus, true)
