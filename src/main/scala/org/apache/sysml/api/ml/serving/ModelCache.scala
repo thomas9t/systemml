@@ -6,24 +6,47 @@ import java.util.concurrent.atomic.LongAdder
 
 import org.apache.sysml.api.jmlc.PreparedScript
 import org.apache.sysml.hops.OptimizerUtils
-import org.apache.sysml.api.jmlc.Connection
 import org.apache.sysml.conf.ConfigurationManager
 import org.apache.sysml.parser.Expression.ValueType
+import org.apache.sysml.parser.DataExpression
 import org.apache.sysml.runtime.controlprogram.caching.MatrixObject
+import org.apache.sysml.runtime.io.MatrixReaderFactory
 import org.apache.sysml.runtime.matrix.data.{InputInfo, OutputInfo}
 import org.apache.sysml.runtime.matrix.{MatrixCharacteristics, MetaDataFormat}
 
-class WeightCache {
+
+class WeightCache(maxMemoryBytes: Long) {
     val cache = new ConcurrentHashMap[String,WeakReference[MatrixObject]]()
     val liveWeights = new ConcurrentHashMap[String,MatrixObject]()
     val refCounts = new ConcurrentHashMap[String,LongAdder]()
     val cacheWeight = new LongAdder()
     val dummyObj = new LongAdder()
-    val conn = new Connection()
 
     def readWeight(path: String): MatrixObject = {
         println("READING WEIGHT: " + path + " FROM DISK")
-        val mat = conn.readMatrix(path)
+
+        val fnamemtd = DataExpression.getMTDFileName(path)
+        val jmtd = new DataExpression().readMetadataFile(fnamemtd, false)
+
+        //parse json meta data
+        val rows = jmtd.getLong(DataExpression.READROWPARAM)
+        val cols = jmtd.getLong(DataExpression.READCOLPARAM)
+        val brlen = if (jmtd.containsKey(DataExpression.ROWBLOCKCOUNTPARAM))
+            jmtd.getInt(DataExpression.ROWBLOCKCOUNTPARAM) else -1
+        val bclen = if (jmtd.containsKey(DataExpression.COLUMNBLOCKCOUNTPARAM))
+            jmtd.getInt(DataExpression.COLUMNBLOCKCOUNTPARAM) else -1
+        val nnz = if (jmtd.containsKey(DataExpression.READNNZPARAM))
+            jmtd.getLong(DataExpression.READNNZPARAM) else -1
+        val format = jmtd.getString(DataExpression.FORMAT_TYPE)
+        val iinfo = InputInfo.stringExternalToInputInfo(format)
+
+        val spaceRequired = if (nnz > 0) nnz*8 else rows*cols*8
+        while (cacheWeight.longValue() + spaceRequired >= maxMemoryBytes)
+            Thread.sleep(1)
+
+        val reader = MatrixReaderFactory.createMatrixReader(iinfo)
+        val mat = reader.readMatrixFromHDFS(path, rows, cols, brlen, bclen, nnz)
+
         val blocksize = ConfigurationManager.getBlocksize
         val mc = new MatrixCharacteristics(mat.getNumRows, mat.getNumColumns, blocksize, blocksize)
         val meta = new MetaDataFormat(mc, OutputInfo.BinaryBlockOutputInfo, InputInfo.BinaryBlockInputInfo)
@@ -35,7 +58,7 @@ class WeightCache {
     }
 
     def acquire(path: String) : MatrixObject = {
-        println("ACQUIRING WEIGHT: " + path)
+        println("ACQUIRING WEIGHT: " + path + " CACHE SIZE => " + cacheWeight.longValue())
         // If the MO is live then return it immediately
         if (liveWeights.containsKey(path)) {
             println("WEIGHT IS LIVE - RETURN IMMEDIATE " + path)
@@ -62,9 +85,8 @@ class WeightCache {
         }
 
         // Now if the object was not cached and was not live we need to actually get it from
-        // disk
+        // disk possibly waiting until the cache has enough space to read it
         if (!cache.containsKey(path) || cache.get(path).get() == null) {
-            println("READING WEIGHT ALL THE WAY FROM DISK: " + path)
             dummyObj.synchronized {
                 if (!cache.containsKey(path) || cache.get(path).get() == null) {
                     val mo = readWeight(path)
@@ -103,7 +125,7 @@ class WeightCache {
 class ModelCache(maxMemoryBytes: Long) {
     var models = new ConcurrentHashMap[String, Model]()
     var modelRefCounts = new ConcurrentHashMap[String, LongAdder]()
-    val weightCache = new WeightCache()
+    val weightCache = new WeightCache(maxMemoryBytes)
 
     // TODO: Add logic to keep track of intermediates as well as live weights and block until enough space is available
     def acquire(name: String, execType: String) : PreparedScript = {
