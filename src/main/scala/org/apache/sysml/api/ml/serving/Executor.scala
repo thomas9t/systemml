@@ -68,17 +68,15 @@ class JmlcExecutor(scheduler: Scheduler, execType: String, gCtx: GPUContext) ext
 
     def run(): Unit = {
         Thread.sleep(1000)
-        println("EXECUTOR IS STARTING")
+        // println("EXECUTOR IS STARTING")
         while (!_shouldShutdown) {
             val requests = scheduler.schedule(this)
             if (requests.nonEmpty) {
-                println("EXEC BATCH")
                 val responses = execute(requests)
                 for ((req, resp) <- requests zip responses) {
                     req.response = resp
                     req.latch.countDown()
                 }
-                println("DONE EXEC BATCH")
             }
         }
     }
@@ -90,7 +88,9 @@ class JmlcExecutor(scheduler: Scheduler, execType: String, gCtx: GPUContext) ext
             val batchedMatrixData = BatchingUtils.batchRequests(requests)
             val batchingTime = System.nanoTime() - start
             val req = requests(0)
+            val modelAcquireStart = System.nanoTime()
             val script = scheduler.modelManager.acquire(req.model.name, execType).clone(false)
+            val modelAcquireTime = System.nanoTime() - modelAcquireStart
             script.setGpuContext(gCtx)
             script.setMatrix(req.model.inputVarName, batchedMatrixData, false)
             val execStart = System.nanoTime()
@@ -98,10 +98,12 @@ class JmlcExecutor(scheduler: Scheduler, execType: String, gCtx: GPUContext) ext
             val execTime = System.nanoTime() - execStart
             responses = BatchingUtils.unbatchRequests(requests, res)
             val stop = System.nanoTime()
+            val modelReleaseStart = System.nanoTime()
             scheduler.modelManager.release(req.model.name)
+            val modelReleaseTime = System.nanoTime() - modelReleaseStart
             scheduler.onCompleteCallback(req.model.name, stop - req.receivedTime, requests.length, execType)
             if (req.statistics != null)
-                setStatistics(requests, start, batchingTime, execTime)
+                setStatistics(requests, start, batchingTime, execTime, modelAcquireTime, modelReleaseTime)
             if (prevModel.nonEmpty)
                 prevModel = req.model.name
         }
@@ -109,12 +111,19 @@ class JmlcExecutor(scheduler: Scheduler, execType: String, gCtx: GPUContext) ext
     }
 
     def setStatistics(requests: Array[SchedulingRequest],
-                      processingStartTime: Long, batchingTime: Long, execTime: Long): Unit = {
+                      processingStartTime: Long,
+                      batchingTime: Long,
+                      execTime: Long,
+                      modelAcquireTime: Long,
+                      modelReleaseTime: Long): Unit = {
         for (req <- requests) {
             req.statistics.batchingTime = batchingTime
             req.statistics.execType = getExecType
             req.statistics.batchSize = requests.length
             req.statistics.queueWaitTime = processingStartTime - req.receivedTime
+            req.statistics.execTime = execTime
+            req.statistics.modelAcquireTime = modelAcquireTime
+            req.statistics.modelReleaseTime = modelReleaseTime
         }
     }
 }

@@ -7,6 +7,7 @@ import scala.concurrent.duration.Duration
 import scala.math.min
 
 class BasicBatchingScheduler(override val timeout: Duration) extends BatchingScheduler {
+
     /**
       * Returns a list of requests to execute. If the list contains more than one element, they will be batched
       * by the executor. Returns an empty list when there are no models to be scheduled.

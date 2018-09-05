@@ -52,12 +52,14 @@ case class RequestStatistics(var batchSize: Int = -1,
                              var execType: String = "",
                              var requestDeserializationTime: Long = -1,
                              var responseSerializationTime: Long = -1,
+                             var modelAcquireTime: Long = -1,
+                             var modelReleaseTime: Long = -1,
                              var batchingTime: Long = -1,
                              var unbatchingTime: Long = -1,
                              var queueWaitTime: Long = -1,
                              var queueSize: Int = -1)
-case class PredictionRequestExternal(name: String, data: String, format: String, rows: Int, cols: Int)
-case class PredictionResponseExternal(response: String, format: String, statistics: RequestStatistics)
+case class PredictionRequestExternal(name: String, data: Array[Double], rows: Int, cols: Int)
+case class PredictionResponseExternal(response: Array[Double], rows: Int, cols: Int, statistics: RequestStatistics)
 
 case class AddModelRequest(name: String, dml: String, inputVarName: String,
                            outputVarName: String, weightsDir: String, latencyObjective: String)
@@ -74,9 +76,9 @@ case class PredictionResponse(response: MatrixBlock, batchSize: Int, statistics:
 case class MatrixBlockContainer(numRows: Long, numCols: Long, nnz: Long, sum: Double, data: MatrixBlock)
 
 trait PredictionJsonProtocol extends SprayJsonSupport with DefaultJsonProtocol {
-    implicit val RequestStatisticsFormat = jsonFormat9(RequestStatistics)
-    implicit val predictionRequestExternalFormat = jsonFormat5(PredictionRequestExternal)
-    implicit val predictionResponseExternalFormat = jsonFormat3(PredictionResponseExternal)
+    implicit val RequestStatisticsFormat = jsonFormat11(RequestStatistics)
+    implicit val predictionRequestExternalFormat = jsonFormat4(PredictionRequestExternal)
+    implicit val predictionResponseExternalFormat = jsonFormat4(PredictionResponseExternal)
 }
 
 trait AddModelJsonProtocol extends SprayJsonSupport with DefaultJsonProtocol {
@@ -202,8 +204,9 @@ object PredictionService extends PredictionJsonProtocol with AddModelJsonProtoco
         var models = Map[String, Model]()
 
         // TODO: Set the scheduler using factory
-        scheduler = new LocalityAwareScheduler(timeout)
-        val gpus = "-1"
+        //scheduler = new LocalityAwareScheduler(timeout)
+        scheduler = new NonBatchingScheduler(timeout)
+        val gpus = null
         val numCores = Runtime.getRuntime.availableProcessors() - 1
         val maxMemory = Runtime.getRuntime.totalMemory()
         if (gpus != null)
@@ -334,16 +337,17 @@ object PredictionService extends PredictionJsonProtocol with AddModelJsonProtoco
         // TODO: Implement other output types...
         if (response != null) {
             val start = System.nanoTime()
-            val matAsArray = DataConverter.convertToDoubleMatrix(response.response)
-            val matAsStr = matAsArray.map {_.mkString(",")}.mkString(Properties.lineSeparator)
+            val dataArray = response.response.getDenseBlockValues
+            val rows = response.response.getNumRows
+            val cols = response.response.getNumColumns
             val serializationTime = System.nanoTime() - start
             if (response.statistics != null) {
                 response.statistics.requestDeserializationTime = deserializationTime
                 response.statistics.responseSerializationTime = serializationTime
             }
-            PredictionResponseExternal(matAsStr, "csv", response.statistics)
+            PredictionResponseExternal(dataArray, rows, cols, response.statistics)
         } else {
-            PredictionResponseExternal("ERROR", "ERROR", null)
+            PredictionResponseExternal(null, -1, -1, null)
         }
     }
 
@@ -363,8 +367,9 @@ object PredictionService extends PredictionJsonProtocol with AddModelJsonProtoco
     }
 
     def processPredictionRequest(request : PredictionRequestExternal) : PredictionRequest = {
-        val mat = processMatrixInput(request.data, request.rows, request.cols, request.format)
-        PredictionRequest(mat, request.name, mat.getNumRows)
+        val mat = new MatrixBlock(request.rows, request.cols, false)
+        mat.init(request.data, request.rows, request.cols)
+        PredictionRequest(mat, request.name, request.rows)
     }
 
     def processMatrixInput(data : String, rows : Int, cols : Int, format : String) : MatrixBlock = {

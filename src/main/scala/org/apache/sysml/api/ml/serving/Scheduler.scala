@@ -40,7 +40,7 @@ trait Scheduler {
     protected var _statistics = true
     implicit val ec : ExecutionContext = ExecutionContext.fromExecutor(Executors.newFixedThreadPool(10000))
     var executorTypes = Array[String]()
-    var modelManager : ModelManager = BasicModelManager
+    var modelManager = ReferenceCountedModelManager
 
     def start(numCores: Int, cpuMemoryBudgetInBytes: Long, gpus: String): Unit = {
         val gCtxs = if (gpus != null) GPUContextPool.reserveAllGPUContexts() else null

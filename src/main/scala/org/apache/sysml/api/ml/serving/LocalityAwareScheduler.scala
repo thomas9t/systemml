@@ -51,7 +51,6 @@ class LocalityAwareScheduler(override val timeout: Duration) extends BatchingSch
         super.start(numCores, cpuMemoryBudgetInBytes, gpus)
         //availableCpuMemory.add((cpuMemoryBudgetInBytes*0.90).toLong)
 
-        modelManager = ReferenceCountedModelManager
         availableCpuMemory.add(0)
         queueManager = new Thread(new ExecutorQueueMananger(this))
         queueManager.start()

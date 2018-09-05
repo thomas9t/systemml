@@ -14,7 +14,12 @@ import org.apache.sysml.runtime.matrix.data.{InputInfo, OutputInfo}
 import org.apache.sysml.runtime.matrix.{MatrixCharacteristics, MetaDataFormat}
 
 trait ModelManager {
+
+    var cleanupEnabled = true
+
     var models: Map[String, Model] = Map()
+
+    def disableCleanup() : Unit = { cleanupEnabled = false }
 
     def put(model: Model): Unit
 
@@ -25,27 +30,15 @@ trait ModelManager {
     def release(name: String) : Unit
 }
 
-object BasicModelManager extends ModelManager {
-
-    def put(model: Model): Unit = { models += (model.name -> model) }
-
-    def get(name: String): Model = { models(name) }
-
-    def acquire(name: String, execType: String): PreparedScript = { get(name).script(execType) }
-
-    def release(name: String): Unit = {}
-
-}
-
 object WeightCache {
     val cache = new ConcurrentHashMap[String,WeakReference[MatrixObject]]()
     val liveWeights = new ConcurrentHashMap[String,MatrixObject]()
     var refCounts: Map[String,LongAdder] = Map()
     val cacheWeight = new LongAdder()
     val conn = new Connection()
+    var cleanupEnabled = true
 
     def readWeight(path: String): MatrixObject = {
-        println("READING WEIGHT: " + path + " FROM DISK")
         val mat = conn.readMatrix(path)
         val blocksize = ConfigurationManager.getBlocksize
         val mc = new MatrixCharacteristics(mat.getNumRows, mat.getNumColumns, blocksize, blocksize)
@@ -53,17 +46,17 @@ object WeightCache {
         val mo = new MatrixObject(ValueType.DOUBLE, OptimizerUtils.getUniqueTempFileName, meta)
         mo.acquireModify(mat)
         mo.release()
-        println("DONE READ WEIGHT: " + path)
         mo
     }
 
+    def disableCleanup() : Unit = { cleanupEnabled = false }
+
     def acquire(path: String) : MatrixObject = {
-        println("ACQUIRING WEIGHT: " + path + " CACHE SIZE => " + cacheWeight.longValue())
         // If the MO is live then return it immediately
-        if (liveWeights.containsKey(path)) {
-            println("WEIGHT IS LIVE - RETURN IMMEDIATE " + path)
+        val mat = liveWeights.getOrDefault(path, null)
+        if (mat != null) {
             refCounts(path).increment()
-            return liveWeights.get(path)
+            return mat
         }
 
         // otherwise check if it's still around as a soft reference
@@ -74,7 +67,6 @@ object WeightCache {
         if (cache.containsKey(path)) {
             val mo = cache.get(path).get()
             if (mo != null) {
-                println("WEIGHT IS CACHED - RETURN FROM CACHE: " + path)
                 cacheWeight.add(mo.getDataSize)
                 liveWeights.put(path, mo)
                 refCounts(path).increment()
@@ -95,17 +87,16 @@ object WeightCache {
         }
 
         val mo = liveWeights.get(path)
+        cacheWeight.add(mo.getDataSize)
         refCounts(path).increment()
         mo
     }
 
     def release(path: String) : Unit = {
-        println("RELEASING WEIGHT: " + path)
         refCounts(path).decrement()
         if (refCounts(path).longValue() == 0) {
-            println("TRANSFERRING WEIGHT TO WEAK REFERENCE: " + path)
             val mo = liveWeights.remove(path)
-            if (mo != null) {
+            if (mo != null && cleanupEnabled) {
                 cacheWeight.add(-1 * mo.getDataSize)
                 cache.put(path, new WeakReference[MatrixObject](mo))
             }
@@ -124,33 +115,38 @@ object ReferenceCountedModelManager extends ModelManager {
 
     // TODO: Add logic to keep track of intermediates as well as live weights and block until enough space is available
     def acquire(name: String, execType: String) : PreparedScript = {
-        println("ACQUIRING MODEL: " + name + " => " + modelRefCounts(name).longValue())
+        // println("ACQUIRING MODEL: " + name + " => " + modelRefCounts(name).longValue())
         // if the model has non-zero refcount then all weights are
         // guaranteed to be already pinned, so we can return immediately
         if (modelRefCounts(name).longValue() > 0) {
-            println("RETURN IMMEDIATE: " + name)
-            modelRefCounts(name).increment()
-            return models(name).script(execType)
+            models(name).synchronized {
+                if (modelRefCounts(name).longValue() > 0) {
+                    modelRefCounts(name).increment()
+                    return models(name).script(execType)
+                }
+            }
         }
 
         // otherwise we need to re-pin the weights, possibly reading them from disk
-        println("ACQUIRE WEIGHTS: " + name)
         val model = models(name)
         model.weightFiles.foreach(x => model.script(execType).setMatrix(x._1, weightCache.acquire(x._2), true))
         modelRefCounts(name).increment()
-        println("DONE ACQUIRE MODEL: " + name)
 
         models(name).script(execType)
     }
 
+    override def disableCleanup(): Unit = {
+        super.disableCleanup()
+        weightCache.disableCleanup()
+        println("CLEANUP IS DISABLED")
+    }
+
     def release(name: String) : Unit = {
-        println("RELEASING MODEL: " + name)
         modelRefCounts(name).decrement()
-        if (modelRefCounts(name).longValue() == 0) {
-            println("RELEASING WEIGHTS FOR: " + name)
+        if (modelRefCounts(name).longValue() == 0 && cleanupEnabled) {
+            models(name).script.foreach { x => x._2.clearParameters() }
             models(name).weightFiles.foreach { x => weightCache.release(x._2) }
         }
-        println("DONE RELEASE MODEL: " + name)
     }
 
     def put(model: Model) : Unit = {
