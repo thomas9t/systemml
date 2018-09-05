@@ -93,11 +93,9 @@ class JmlcExecutor(scheduler: Scheduler, execType: String, gCtx: GPUContext) ext
             val modelAcquireTime = System.nanoTime() - modelAcquireStart
             script.setGpuContext(gCtx)
             script.setMatrix(req.model.inputVarName, batchedMatrixData, false)
-            println("BEGIN EXECUTE ACTUAL: " + req.model.name)
             val execStart = System.nanoTime()
             val res = script.executeScript().getMatrixBlock(req.model.outputVarName)
             val execTime = System.nanoTime() - execStart
-            println("DONE EXEC ACTUAL: " + req.model.name)
             responses = BatchingUtils.unbatchRequests(requests, res)
             val stop = System.nanoTime()
             val modelReleaseStart = System.nanoTime()

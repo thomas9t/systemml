@@ -38,7 +38,6 @@ import spray.json._
 import java.util.concurrent.atomic.LongAdder
 
 import scala.concurrent.{Await, Future}
-import org.apache.sysml.runtime.util.DataConverter
 import org.apache.sysml.runtime.matrix.data.MatrixBlock
 import org.apache.sysml.parser.DataExpression
 import org.apache.sysml.runtime.io.IOUtilFunctions
@@ -227,8 +226,8 @@ object PredictionService extends PredictionJsonProtocol with AddModelJsonProtoco
                                         val processedRequest = processPredictionRequest(request)
                                         val deserializationTime = System.nanoTime() - start
 
-                                        val schedulerResult = scheduler.enqueue(processedRequest, models(request.name))
-                                        val response = Await.result(schedulerResult, timeout)
+                                        val response = Await.result(
+                                            scheduler.enqueue(processedRequest, models(request.name)), timeout)
                                         totalTime.add(System.nanoTime() - start)
 
                                         numCompletedPredictions.increment()

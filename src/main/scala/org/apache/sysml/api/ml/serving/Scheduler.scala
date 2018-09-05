@@ -23,7 +23,7 @@ import scala.concurrent.duration._
 import java.util.concurrent._
 
 import org.apache.sysml.runtime.instructions.gpu.context.GPUContextPool
-
+import scala.concurrent.ExecutionContext.Implicits.global
 import scala.concurrent.ExecutionContext
 
 case class SchedulingRequest(request: PredictionRequest,
@@ -38,7 +38,7 @@ object EXECUTOR_METHOD extends Enumeration { val LOCALITY_AWARE, BLOCKING = Valu
 trait Scheduler {
     var executorService: ExecutorService = _
     protected var _statistics = true
-    implicit val ec : ExecutionContext = ExecutionContext.fromExecutor(Executors.newFixedThreadPool(10000))
+    implicit val ec : ExecutionContext = global
     var executorTypes = Array[String]()
     var modelManager = ReferenceCountedModelManager
 
