@@ -118,14 +118,9 @@ object ReferenceCountedModelManager extends ModelManager {
         // println("ACQUIRING MODEL: " + name + " => " + modelRefCounts(name).longValue())
         // if the model has non-zero refcount then all weights are
         // guaranteed to be already pinned, so we can return immediately
-        if (modelRefCounts(name).longValue() > 0) {
-            models(name).synchronized {
-                if (modelRefCounts(name).longValue() > 0) {
-                    modelRefCounts(name).increment()
-                    return models(name).script(execType)
-                }
-            }
-        }
+        modelRefCounts(name).increment()
+        if (modelRefCounts(name).longValue() > 1)
+                return models(name).script(execType)
 
         // otherwise we need to re-pin the weights, possibly reading them from disk
         val model = models(name)

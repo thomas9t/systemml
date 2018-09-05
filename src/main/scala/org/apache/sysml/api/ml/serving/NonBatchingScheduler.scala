@@ -7,7 +7,7 @@ import scala.concurrent.Future
 import scala.concurrent.duration.Duration
 
 class NonBatchingScheduler(override val timeout: Duration) extends Scheduler {
-    //modelManager.disableCleanup()
+    modelManager.disableCleanup()
 
     override def schedule(executor: JmlcExecutor): Array[SchedulingRequest] = {
         var ret = Array[SchedulingRequest]()
