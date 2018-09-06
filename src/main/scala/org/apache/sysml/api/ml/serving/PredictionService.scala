@@ -145,6 +145,7 @@ object PredictionService extends PredictionJsonProtocol with AddModelJsonProtoco
         akka.http.client.idle-timeout=infinite
         akka.http.host-connection-pool.idle-timeout=infinite
         akka.http.host-connection-pool.client.idle-timeout=infinite
+        akka.http.server.max-connections=100000
     """)
     val basicConf = ConfigFactory.load()
     val combined = customConf.withFallback(basicConf)
