@@ -23,7 +23,6 @@ import scala.concurrent.duration._
 import java.util.concurrent._
 
 import org.apache.sysml.runtime.instructions.gpu.context.GPUContextPool
-import scala.concurrent.ExecutionContext.Implicits.global
 import scala.concurrent.ExecutionContext
 
 case class SchedulingRequest(request: PredictionRequest,
@@ -38,7 +37,7 @@ object EXECUTOR_METHOD extends Enumeration { val LOCALITY_AWARE, BLOCKING = Valu
 trait Scheduler {
     var executorService: ExecutorService = _
     protected var _statistics = true
-    implicit val ec : ExecutionContext = global
+    implicit val ec : ExecutionContext = ExecutionContext.fromExecutor(Executors.newFixedThreadPool(2000))
     var executorTypes = Array[String]()
     var modelManager = ReferenceCountedModelManager
 
@@ -53,18 +52,18 @@ trait Scheduler {
             executorTypes :+= "GPU"
 
         println("STARTING SCHEDULER WITH: " + numCores + " CPU => " + numGpus + " GPUS")
-        for (_ <- 0 until numCores) {
-            val exec = new JmlcExecutor(this, "CPU", null)
-            executorQueues.put(exec, new BatchQueue("CPU"))
+        for (i <- 0 until numCores) {
+            val exec = new JmlcExecutor(this, "CPU", null, "CPU" + i)
+            executorQueues.put(exec, new BatchQueue("CPU", "CPU" + i))
             executorService.submit(exec)
         }
         for (i <- 0 until numGpus) {
-            val exec = new JmlcExecutor(this, "GPU", gCtxs.get(i))
-            executorQueues.put(exec, new BatchQueue("GPU"))
+            val exec = new JmlcExecutor(this, "GPU", gCtxs.get(i), "GPU" + i)
+            executorQueues.put(exec, new BatchQueue("GPU", "GPU" + i))
             executorService.submit(exec)
         }
 
-        executorTypes.foreach{x => globalSchedulingQueues.put(x, new BatchQueue(x))}
+        executorTypes.foreach{x => globalSchedulingQueues.put(x, new BatchQueue(x, "GLOBAL-" + x))}
     }
 
     def shutdown(): Unit = {

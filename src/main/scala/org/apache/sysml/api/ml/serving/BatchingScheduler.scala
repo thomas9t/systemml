@@ -2,12 +2,11 @@ package org.apache.sysml.api.ml.serving
 
 import java.util.concurrent.ConcurrentHashMap
 
-import scala.math.floor
+import scala.math.{floor, max}
 
 trait BatchingScheduler extends Scheduler {
 
     val modelBatchSizes = new ConcurrentHashMap[String, ConcurrentHashMap[String,Int]]()
-    val execTimeEstimators = new ConcurrentHashMap[String, ConcurrentHashMap[String,RLSEstimator]]()
 
     def getOptimalBatchSize(model : String, execType: String) : Int = {
         modelBatchSizes.putIfAbsent(execType, new ConcurrentHashMap[String,Int]())
@@ -24,7 +23,7 @@ trait BatchingScheduler extends Scheduler {
             modelBatchSizes.synchronized({
                 val prevSize = modelBatchSizes.get(execType).get(model)
                 modelBatchSizes.get(execType).put(model,
-                    if (latency < latencyObjective.toNanos) prevSize+2 else floor(prevSize*0.90).toInt)
+                    if (latency < latencyObjective.toNanos) prevSize+2 else max(floor(prevSize*0.90).toInt, 1))
             })
         }
 
@@ -47,12 +46,12 @@ trait BatchingScheduler extends Scheduler {
             val name = keyIterator.nextElement()
             if (modelQueues.get(name).size() > 0) {
                 val nextRequest = modelQueues.get(name).peek()
-                if (checkShortFuse(nextRequest)) {
+                assert(nextRequest != null, "Something is wrong. Next request should not be null")
+                if (checkShortFuse(nextRequest))
                     shortFuse += ((name, nextRequest.receivedTime - System.nanoTime()))
-                }
-                if (modelQueues.get(name).size() >= getOptimalBatchSize(name, execType)) {
+
+                if (modelQueues.get(name).size() >= getOptimalBatchSize(name, execType))
                     batchableModels += name
-                }
             }
         }
 

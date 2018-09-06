@@ -443,7 +443,7 @@ public class PreparedScript implements ConfigurableAPI
 	public void clearParameters() {
 		_vars.removeAll();
 	}
-	
+
 	/**
 	 * Executes the prepared script over the bound inputs, creating the
 	 * result variables according to bound and registered outputs.

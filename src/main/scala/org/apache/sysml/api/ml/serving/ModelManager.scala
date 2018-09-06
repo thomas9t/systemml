@@ -118,14 +118,16 @@ object ReferenceCountedModelManager extends ModelManager {
         // println("ACQUIRING MODEL: " + name + " => " + modelRefCounts(name).longValue())
         // if the model has non-zero refcount then all weights are
         // guaranteed to be already pinned, so we can return immediately
-        modelRefCounts(name).increment()
-        if (modelRefCounts(name).longValue() > 1)
+        if (modelRefCounts(name).longValue() > 0)
                 return models(name).script(execType)
 
         // otherwise we need to re-pin the weights, possibly reading them from disk
         val model = models(name)
-        model.weightFiles.foreach(x => model.script(execType).setMatrix(x._1, weightCache.acquire(x._2), true))
-        modelRefCounts(name).increment()
+        model.synchronized {
+            if (modelRefCounts(name).longValue() == 0)
+                model.weightFiles.foreach(x => model.script(execType).setMatrix(x._1, weightCache.acquire(x._2), true))
+            modelRefCounts(name).increment()
+        }
 
         models(name).script(execType)
     }
@@ -139,8 +141,12 @@ object ReferenceCountedModelManager extends ModelManager {
     def release(name: String) : Unit = {
         modelRefCounts(name).decrement()
         if (modelRefCounts(name).longValue() == 0 && cleanupEnabled) {
-            models(name).script.foreach { x => x._2.clearParameters() }
-            models(name).weightFiles.foreach { x => weightCache.release(x._2) }
+            models(name).synchronized {
+                if (modelRefCounts(name).longValue() == 0) {
+                    models(name).script.foreach { x => x._2.clearParameters() }
+                    models(name).weightFiles.foreach { x => weightCache.release(x._2) }
+                }
+            }
         }
     }
 

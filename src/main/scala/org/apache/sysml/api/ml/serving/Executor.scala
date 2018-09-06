@@ -30,8 +30,10 @@ case class Batch(size: Int, expectedTime: Long, priority: Double, modelName: Str
     }
 }
 
-class BatchQueue(execType: String) extends PriorityBlockingQueue[Batch] {
+class BatchQueue(execType: String, name: String) extends PriorityBlockingQueue[Batch] {
     private val expectedExecutionTime = new LongAdder()
+
+    def getName : String = { name }
 
     def enqueue(batch: Batch) : Unit = {
         synchronized {
@@ -55,7 +57,7 @@ class BatchQueue(execType: String) extends PriorityBlockingQueue[Batch] {
     def getExecType : String = { execType }
 }
 
-class JmlcExecutor(scheduler: Scheduler, execType: String, gCtx: GPUContext) extends Runnable {
+class JmlcExecutor(scheduler: Scheduler, execType: String, gCtx: GPUContext, name: String) extends Runnable {
     @volatile protected var _shouldShutdown: Boolean = false
 
     var prevModel = ""
@@ -66,9 +68,10 @@ class JmlcExecutor(scheduler: Scheduler, execType: String, gCtx: GPUContext) ext
 
     def getExecType: String = { execType }
 
+    def getName: String = { name }
+
     def run(): Unit = {
         Thread.sleep(1000)
-        // println("EXECUTOR IS STARTING")
         while (!_shouldShutdown) {
             val requests = scheduler.schedule(this)
             if (requests.nonEmpty) {

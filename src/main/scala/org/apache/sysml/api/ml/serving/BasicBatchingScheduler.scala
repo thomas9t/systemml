@@ -7,7 +7,6 @@ import scala.concurrent.duration.Duration
 import scala.math.min
 
 class BasicBatchingScheduler(override val timeout: Duration) extends BatchingScheduler {
-
     /**
       * Returns a list of requests to execute. If the list contains more than one element, they will be batched
       * by the executor. Returns an empty list when there are no models to be scheduled.
@@ -16,21 +15,15 @@ class BasicBatchingScheduler(override val timeout: Duration) extends BatchingSch
       */
     override def schedule(executor: JmlcExecutor) : Array[SchedulingRequest] = {
         var ret = Array[SchedulingRequest]()
-        if (requestQueue.size() > 0) {
-            val execType = executor.getExecType
-            dummyResponse.synchronized {
-                if (requestQueue.size() > 0) {
-                    val schedulableModels = getSchedulableModels(execType)
-                    if (schedulableModels.nonEmpty) {
-                        val (nextModel, nextBatchSize) = getNextModelAndBatchSize(
-                            schedulableModels, execType)
-                        for (_ <- 0 until nextBatchSize) {
-                            val next = modelQueues.get(nextModel).poll()
-                            assert(next != null, "Something is wrong")
-                            requestQueue.remove(next)
-                            ret :+= next
-                        }
-                    }
+        val execType = executor.getExecType
+        dummyResponse.synchronized {
+            val schedulableModels = getSchedulableModels(execType)
+            if (schedulableModels.nonEmpty) {
+                val (nextModel, nextBatchSize) = getNextModelAndBatchSize(schedulableModels, execType)
+                for (_ <- 0 until nextBatchSize) {
+                    val next = modelQueues.get(nextModel).poll()
+                    assert(next != null, "Something is wrong")
+                    ret :+= next
                 }
             }
         }
@@ -64,7 +57,6 @@ class BasicBatchingScheduler(override val timeout: Duration) extends BatchingSch
         val schedulingRequest = SchedulingRequest(
             request, model, new CountDownLatch(1), System.nanoTime(), null, statistics)
         statistics.queueSize = modelQueues.get(model.name).size
-        requestQueue.add(schedulingRequest)
         modelQueues.get(model.name).add(schedulingRequest)
         counter += 1
         try {
