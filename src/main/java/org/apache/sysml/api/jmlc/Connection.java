@@ -6,9 +6,9 @@
  * to you under the Apache License, Version 2.0 (the
  * "License"); you may not use this file except in compliance
  * with the License.  You may obtain a copy of the License at
- * 
+ *
  *   http://www.apache.org/licenses/LICENSE-2.0
- * 
+ *
  * Unless required by applicable law or agreed to in writing,
  * software distributed under the License is distributed on an
  * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
@@ -25,15 +25,18 @@ import java.io.FileReader;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.InputStreamReader;
-import java.util.Arrays;
+import java.util.ArrayList;
 import java.util.Collections;
+import java.util.List;
 import java.util.Map;
 
+import org.apache.avro.generic.GenericData;
 import org.apache.hadoop.fs.FileSystem;
 import org.apache.hadoop.fs.Path;
-import org.apache.sysml.api.DMLException;
 import org.apache.sysml.api.DMLScript;
 import org.apache.sysml.api.DMLScript.RUNTIME_PLATFORM;
+import org.apache.sysml.api.ScriptExecutorUtils;
+import org.apache.sysml.api.ScriptExecutorUtils.SystemMLAPI;
 import org.apache.sysml.api.mlcontext.ScriptType;
 import org.apache.sysml.conf.CompilerConfig;
 import org.apache.sysml.conf.CompilerConfig.ConfigType;
@@ -41,18 +44,12 @@ import org.apache.sysml.conf.ConfigurationManager;
 import org.apache.sysml.conf.DMLConfig;
 import org.apache.sysml.conf.DMLOptions;
 import org.apache.sysml.hops.codegen.SpoofCompiler;
-import org.apache.sysml.hops.rewrite.ProgramRewriter;
-import org.apache.sysml.hops.rewrite.RewriteRemovePersistentReadWrite;
-import org.apache.sysml.parser.DMLProgram;
-import org.apache.sysml.parser.DMLTranslator;
 import org.apache.sysml.parser.DataExpression;
-import org.apache.sysml.parser.LanguageException;
-import org.apache.sysml.parser.ParseException;
-import org.apache.sysml.parser.ParserFactory;
-import org.apache.sysml.parser.ParserWrapper;
 import org.apache.sysml.runtime.DMLRuntimeException;
 import org.apache.sysml.runtime.controlprogram.Program;
 import org.apache.sysml.runtime.controlprogram.caching.CacheableData;
+import org.apache.sysml.runtime.instructions.gpu.context.GPUContext;
+import org.apache.sysml.runtime.instructions.gpu.context.GPUContextPool;
 import org.apache.sysml.runtime.io.FrameReader;
 import org.apache.sysml.runtime.io.FrameReaderFactory;
 import org.apache.sysml.runtime.io.IOUtilFunctions;
@@ -77,7 +74,7 @@ import org.apache.wink.json4j.JSONObject;
  * method on the {@link Connection} object, which returns a
  * {@link PreparedScript} object. Note that this is similar to calling
  * a {@code prepareStatement} method on a JDBC {@code Connection} object.
- * 
+ *
  * <p>
  * Following this, input variable data is passed to the script by calling the
  * {@code setFrame}, {@code setMatrix}, and {@code setScalar} methods of the {@link PreparedScript}
@@ -87,7 +84,7 @@ import org.apache.wink.json4j.JSONObject;
  * {@code ResultSet}. Data can be read from a {@link ResultVariables} object by calling
  * its {@link ResultVariables#getFrame(String) getFrame} and
  * {@link ResultVariables#getMatrix(String) getMatrix} methods.
- * 
+ *
  * <p>
  * For examples, please see the following:
  * <ul>
@@ -100,57 +97,59 @@ public class Connection implements Closeable
 {
 	private final DMLConfig _dmlconf;
 	private final CompilerConfig _cconf;
-	
+
 	/**
 	 * Connection constructor, the starting point for any other JMLC API calls.
-	 * 
+	 *
 	 */
 	public Connection() {
-		 //with default dml configuration
+		//with default dml configuration
 		this(new DMLConfig());
 	}
-	
+
 	/**
 	 * Connection constructor, the starting point for any other JMLC API calls.
 	 * This variant allows to enable a set of boolean compiler configurations.
-	 * 
+	 *
 	 * @param cconfigs one or many boolean compiler configurations to enable.
 	 */
 	public Connection(CompilerConfig.ConfigType... cconfigs) {
 		//basic constructor, which also constructs the compiler config
 		this(new DMLConfig()); //with default dml configuration
-		
+
 		//set optional compiler configurations in current config
 		for( ConfigType configType : cconfigs )
 			_cconf.set(configType, true);
 		setLocalConfigs();
 	}
-	
+
 	/**
 	 * Connection constructor, the starting point for any other JMLC API calls.
 	 * This variant allows to pass a global dml configuration and enable a set
 	 * of boolean compiler configurations.
-	 * 
+	 *
 	 * @param dmlconfig a dml configuration.
 	 * @param cconfigs one or many boolean compiler configurations to enable.
 	 */
 	public Connection(DMLConfig dmlconfig, CompilerConfig.ConfigType... cconfigs) {
 		//basic constructor, which also constructs the compiler config
-		this(dmlconfig); 
-		
+		this(dmlconfig);
+
 		//set optional compiler configurations in current config
 		for( ConfigType configType : cconfigs )
 			_cconf.set(configType, true);
 		setLocalConfigs();
 	}
-	
+
 	/**
 	 * Connection constructor, the starting point for any other JMLC API calls.
 	 * This variant allows to pass a global dml configuration.
-	 * 
+	 *
 	 * @param dmlconfig a dml configuration.
 	 */
 	public Connection(DMLConfig dmlconfig) {
+		DMLScript.rtplatform = RUNTIME_PLATFORM.SINGLE_NODE;
+
 		//setup basic parameters for embedded execution
 		//(parser, compiler, and runtime parameters)
 		CompilerConfig cconf = new CompilerConfig();
@@ -169,19 +168,19 @@ public class Connection implements Closeable
 		cconf.set(ConfigType.ALLOW_CSE_PERSISTENT_READS, false);
 		cconf.set(ConfigType.CODEGEN_ENABLED, false);
 		_cconf = cconf;
-		
-		//disable caching globally 
+
+		//disable caching globally
 		CacheableData.disableCaching();
-		
+
 		//assign the given configuration
 		_dmlconf = dmlconfig;
-		
+
 		setLocalConfigs();
 	}
-	
+
 	/**
 	 * Prepares (precompiles) a script and registers input and output variables.
-	 * 
+	 *
 	 * @param script string representing the DML or PyDML script
 	 * @param inputs string array of input variables to register
 	 * @param outputs string array of output variables to register
@@ -190,10 +189,28 @@ public class Connection implements Closeable
 	public PreparedScript prepareScript( String script, String[] inputs, String[] outputs) {
 		return prepareScript(script, inputs, outputs, false);
 	}
-	
+
 	/**
 	 * Prepares (precompiles) a script and registers input and output variables.
-	 * 
+	 *
+	 * @param script string representing the DML or PyDML script
+	 * @param inputs string array of input variables to register
+	 * @param outputs string array of output variables to register
+	 * @param useGpu {@code true} if prepare the script with GPU support, {@code false}
+	 * @param forceGpu {@code true} if prepare the script with forced GPU support, {@code false}
+	 * @param gpuIndex the GPU to use to execute the given prepared script
+	 * @return PreparedScript object representing the precompiled script
+	 */
+	public PreparedScript prepareScript(
+			String script, String[] inputs, String[] outputs, boolean useGpu, boolean forceGpu, int gpuIndex) {
+		return prepareScript(
+				script, Collections.emptyMap(), Collections.emptyMap(),
+				inputs, outputs, false, useGpu, forceGpu, gpuIndex);
+	}
+
+	/**
+	 * Prepares (precompiles) a script and registers input and output variables.
+	 *
 	 * @param script string representing the DML or PyDML script
 	 * @param inputs string array of input variables to register
 	 * @param outputs string array of output variables to register
@@ -203,10 +220,10 @@ public class Connection implements Closeable
 	public PreparedScript prepareScript( String script, String[] inputs, String[] outputs, boolean parsePyDML) {
 		return prepareScript(script, Collections.emptyMap(), inputs, outputs, parsePyDML);
 	}
-	
+
 	/**
 	 * Prepares (precompiles) a script, sets input parameter values, and registers input and output variables.
-	 * 
+	 *
 	 * @param script string representing the DML or PyDML script
 	 * @param args map of input parameters ($) and their values
 	 * @param inputs string array of input variables to register
@@ -217,10 +234,10 @@ public class Connection implements Closeable
 	public PreparedScript prepareScript( String script, Map<String, String> args, String[] inputs, String[] outputs, boolean parsePyDML) {
 		return prepareScript(script, Collections.emptyMap(), args, inputs, outputs, parsePyDML);
 	}
-	
+
 	/**
 	 * Prepares (precompiles) a script, sets input parameter values, and registers input and output variables.
-	 * 
+	 *
 	 * @param script string representing of the DML or PyDML script
 	 * @param nsscripts map (name, script) of the DML or PyDML namespace scripts
 	 * @param args map of input parameters ($) and their values
@@ -230,69 +247,77 @@ public class Connection implements Closeable
 	 * @return PreparedScript object representing the precompiled script
 	 */
 	public PreparedScript prepareScript(String script, Map<String,String> nsscripts, Map<String, String> args, String[] inputs, String[] outputs, boolean parsePyDML) {
-		DMLScript.SCRIPT_TYPE = parsePyDML ? ScriptType.PYDML : ScriptType.DML;
-
-		// Set DML Options here:
-		boolean gpu = false; boolean forceGPU = false;
-		ConfigurationManager.setLocalOptions(new DMLOptions(args, 
-				false, 10, false, Explain.ExplainType.NONE, RUNTIME_PLATFORM.SINGLE_NODE, gpu, forceGPU, 
-				parsePyDML ? ScriptType.PYDML : ScriptType.DML, null, script));
-		
-		//check for valid names of passed arguments
-		String[] invalidArgs = args.keySet().stream()
-			.filter(k -> k==null || !k.startsWith("$")).toArray(String[]::new);
-		if( invalidArgs.length > 0 )
-			throw new LanguageException("Invalid argument names: "+Arrays.toString(invalidArgs));
-		
-		//check for valid names of input and output variables
-		String[] invalidVars = UtilFunctions.asSet(inputs, outputs).stream()
-			.filter(k -> k==null || k.startsWith("$")).toArray(String[]::new);
-		if( invalidVars.length > 0 )
-			throw new LanguageException("Invalid variable names: "+Arrays.toString(invalidVars));
-		
-		setLocalConfigs();
-		
-		//simplified compilation chain
-		Program rtprog = null;
-		try {
-			//parsing
-			ParserWrapper parser = ParserFactory.createParser(
-				parsePyDML ? ScriptType.PYDML : ScriptType.DML, nsscripts);
-			DMLProgram prog = parser.parse(null, script, args);
-			
-			//language validate
-			DMLTranslator dmlt = new DMLTranslator(prog);
-			dmlt.liveVariableAnalysis(prog);
-			dmlt.validateParseTree(prog);
-			
-			//hop construct/rewrite
-			dmlt.constructHops(prog);
-			dmlt.rewriteHopsDAG(prog);
-			
-			//rewrite persistent reads/writes
-			RewriteRemovePersistentReadWrite rewrite = new RewriteRemovePersistentReadWrite(inputs, outputs);
-			ProgramRewriter rewriter2 = new ProgramRewriter(rewrite);
-			rewriter2.rewriteProgramHopDAGs(prog);
-			
-			//lop construct and runtime prog generation
-			dmlt.constructLops(prog);
-			rtprog = dmlt.getRuntimeProgram(prog, _dmlconf);
-			
-			//final cleanup runtime prog
-			JMLCUtils.cleanupRuntimeProgram(rtprog, outputs);
-		}
-		catch(ParseException pe) {
-			// don't chain ParseException (for cleaner error output)
-			throw pe;
-		}
-		catch(Exception ex) {
-			throw new DMLException(ex);
-		}
-		
-		//return newly create precompiled script 
-		return new PreparedScript(rtprog, inputs, outputs, _dmlconf, _cconf);
+		return prepareScript(script, nsscripts, args, inputs, outputs, parsePyDML, false, false, -1);
 	}
-	
+
+	/**
+	 * List of available GPU contexts:
+	 */
+	static GPUContext [] AVAILABLE_GPU_CONTEXTS;
+
+
+	/**
+	 * Prepares (precompiles) a script, sets input parameter values, and registers input and output variables.
+	 *
+	 * @param script string representing of the DML or PyDML script
+	 * @param nsscripts map (name, script) of the DML or PyDML namespace scripts
+	 * @param args map of input parameters ($) and their values
+	 * @param inputs string array of input variables to register
+	 * @param outputs string array of output variables to register
+	 * @param parsePyDML {@code true} if PyDML, {@code false} if DML
+	 * @param useGPU {@code true} if prepare the script with GPU support, {@code false}
+	 * @param forceGPU {@code true} if prepare the script with forced GPU support, {@code false}
+	 * @param gpuIndex the GPU to use to execute the given prepared script
+	 * @return PreparedScript object representing the precompiled script
+	 */
+	public PreparedScript prepareScript(String script, Map<String,String> nsscripts, Map<String, String> args, String[] inputs, String[] outputs,
+										boolean parsePyDML, boolean useGPU, boolean forceGPU, int gpuIndex) {
+
+		DMLScript.SCRIPT_TYPE = parsePyDML ? ScriptType.PYDML : ScriptType.DML;
+		ConfigurationManager.setLocalOptions(new DMLOptions(args,
+				false, 10, false,
+				Explain.ExplainType.NONE, RUNTIME_PLATFORM.SINGLE_NODE, useGPU, forceGPU,
+				parsePyDML ? ScriptType.PYDML : ScriptType.DML, null, script));
+		setLocalConfigs();
+
+		Program rtprog= ScriptExecutorUtils.compileRuntimeProgram(script, nsscripts, args, inputs, outputs,
+					parsePyDML ? ScriptType.PYDML : ScriptType.DML, _dmlconf, SystemMLAPI.JMLC);
+
+
+		//return newly create precompiled script
+		PreparedScript ret = new PreparedScript(rtprog, inputs, outputs, _dmlconf, _cconf);
+		ret._gpuCtx = (useGPU) ? getAndInitializeGpuContext(gpuIndex) : null;
+		return ret;
+	}
+
+	/**
+	 * Lazy initialization of the GPU context - only performed once per Connection instance
+	 */
+	private List<GPUContext> getAndInitializeGpuContext(int gpuIndex) {
+		if (AVAILABLE_GPU_CONTEXTS == null) {
+			synchronized (Connection.class) {
+				if (AVAILABLE_GPU_CONTEXTS == null) {
+					// Initialize the GPUs if not already
+					String oldAvailableGpus = GPUContextPool.AVAILABLE_GPUS;
+					GPUContextPool.AVAILABLE_GPUS = "-1"; // use all the GPUs in JMLC mode
+					List<GPUContext> availableCtx = GPUContextPool.getAllGPUContexts();
+					AVAILABLE_GPU_CONTEXTS = availableCtx.toArray(new GPUContext[availableCtx.size()]);
+					GPUContextPool.AVAILABLE_GPUS = oldAvailableGpus;
+				}
+			}
+		}
+		if(AVAILABLE_GPU_CONTEXTS.length == 0)
+			throw new DMLRuntimeException("No GPU Context in available");
+		else if(gpuIndex < 0 || gpuIndex >= AVAILABLE_GPU_CONTEXTS.length)
+			throw new DMLRuntimeException("Cannot use the GPU " + gpuIndex +
+					". Valid values: [0, " + (AVAILABLE_GPU_CONTEXTS.length-1) + "]");
+		// For simplicity of the API, the initial version statically associates a GPU to the prepared script.
+		// We can revisit this assumption if it turns out to be the overhead.
+		List<GPUContext> _gpuCtx = new ArrayList<>();
+		_gpuCtx.add(AVAILABLE_GPU_CONTEXTS[gpuIndex]);
+		return _gpuCtx;
+	}
+
 	/**
 	 * Close connection to SystemML, which clears the
 	 * thread-local DML and compiler configurations.
@@ -304,34 +329,34 @@ public class Connection implements Closeable
 		if( ConfigurationManager.isCodegenEnabled() )
 			SpoofCompiler.cleanupCodeGenerator();
 	}
-	
+
 	/**
 	 * Read a DML or PyDML file as a string.
-	 * 
+	 *
 	 * @param fname the filename of the script
 	 * @return string content of the script file
 	 * @throws IOException if IOException occurs
 	 */
-	public String readScript(String fname) 
-		throws IOException
+	public String readScript(String fname)
+			throws IOException
 	{
 		StringBuilder sb = new StringBuilder();
 		BufferedReader in = null;
-		try 
+		try
 		{
 			//read from hdfs or gpfs file system
 			if(    fname.startsWith("hdfs:") || fname.startsWith("gpfs:")
-				|| IOUtilFunctions.isObjectStoreFileScheme(new Path(fname)) ) 
-			{ 
+					|| IOUtilFunctions.isObjectStoreFileScheme(new Path(fname)) )
+			{
 				Path scriptPath = new Path(fname);
 				FileSystem fs = IOUtilFunctions.getFileSystem(scriptPath);
 				in = new BufferedReader(new InputStreamReader(fs.open(scriptPath)));
 			}
 			// from local file system
-			else { 
+			else {
 				in = new BufferedReader(new FileReader(fname));
 			}
-			
+
 			//core script reading
 			String tmp = null;
 			while ((tmp = in.readLine()) != null) {
@@ -342,31 +367,31 @@ public class Connection implements Closeable
 		finally {
 			IOUtilFunctions.closeSilently(in);
 		}
-		
+
 		return sb.toString();
 	}
-	
+
 	////////////////////////////////////////////
 	// Read matrices
 	////////////////////////////////////////////
-	
+
 	/**
 	 * Reads an input matrix in arbitrary format from HDFS into a dense double array.
 	 * NOTE: this call currently only supports default configurations for CSV.
-	 * 
+	 *
 	 * @param fname the filename of the input matrix
 	 * @return matrix as a two-dimensional double array
 	 * @throws IOException if IOException occurs
 	 */
-	public double[][] readDoubleMatrix(String fname) 
-		throws IOException
+	public double[][] readDoubleMatrix(String fname)
+			throws IOException
 	{
 		try {
-			//read json meta data 
+			//read json meta data
 			String fnamemtd = DataExpression.getMTDFileName(fname);
 			JSONObject jmtd = new DataExpression().readMetadataFile(fnamemtd, false);
-			
-			//parse json meta data 
+
+			//parse json meta data
 			long rows = jmtd.getLong(DataExpression.READROWPARAM);
 			long cols = jmtd.getLong(DataExpression.READCOLPARAM);
 			int brlen = jmtd.containsKey(DataExpression.ROWBLOCKCOUNTPARAM)?
@@ -377,7 +402,7 @@ public class Connection implements Closeable
 					jmtd.getLong(DataExpression.READNNZPARAM) : -1;
 			String format = jmtd.getString(DataExpression.FORMAT_TYPE);
 			InputInfo iinfo = InputInfo.stringExternalToInputInfo(format);
-		
+
 			//read matrix file
 			return readDoubleMatrix(fname, iinfo, rows, cols, brlen, bclen, nnz);
 		}
@@ -385,11 +410,11 @@ public class Connection implements Closeable
 			throw new IOException(ex);
 		}
 	}
-	
+
 	/**
 	 * Reads an input matrix in arbitrary format from HDFS into a dense double array.
 	 * NOTE: this call currently only supports default configurations for CSV.
-	 * 
+	 *
 	 * @param fname the filename of the input matrix
 	 * @param iinfo InputInfo object
 	 * @param rows number of rows in the matrix
@@ -400,11 +425,11 @@ public class Connection implements Closeable
 	 * @return matrix as a two-dimensional double array
 	 * @throws IOException if IOException occurs
 	 */
-	public double[][] readDoubleMatrix(String fname, InputInfo iinfo, long rows, long cols, int brlen, int bclen, long nnz) 
-		throws IOException
+	public double[][] readDoubleMatrix(String fname, InputInfo iinfo, long rows, long cols, int brlen, int bclen, long nnz)
+			throws IOException
 	{
 		setLocalConfigs();
-		
+
 		try {
 			MatrixReader reader = MatrixReaderFactory.createMatrixReader(iinfo);
 			MatrixBlock mb = reader.readMatrixFromHDFS(fname, rows, cols, brlen, bclen, nnz);
@@ -414,28 +439,28 @@ public class Connection implements Closeable
 			throw new IOException(ex);
 		}
 	}
-	
+
 	/**
 	 * Converts an input string representation of a matrix in csv or textcell format
 	 * into a dense double array. The meta data string is the SystemML generated
 	 * .mtd file including the number of rows and columns.
-	 * 
+	 *
 	 * @param input string matrix in csv or textcell format
 	 * @param meta string representing SystemML matrix metadata in JSON format
 	 * @return matrix as a two-dimensional double array
 	 * @throws IOException if IOException occurs
 	 */
-	public double[][] convertToDoubleMatrix(String input, String meta) 
-		throws IOException
+	public double[][] convertToDoubleMatrix(String input, String meta)
+			throws IOException
 	{
 		MatrixBlock mb = convertToMatrix(input, meta);
 		return DataConverter.convertToDoubleMatrix(mb);
 	}
-	
+
 	/**
 	 * Converts an input string representation of a matrix in textcell format
-	 * into a dense double array. 
-	 * 
+	 * into a dense double array.
+	 *
 	 * @param input string matrix in textcell format
 	 * @param rows number of rows in the matrix
 	 * @param cols number of columns in the matrix
@@ -447,11 +472,11 @@ public class Connection implements Closeable
 			return convertToDoubleMatrix(is, rows, cols);
 		}
 	}
-	
+
 	/**
 	 * Converts an input stream of a string matrix in textcell format
-	 * into a dense double array. 
-	 * 
+	 * into a dense double array.
+	 *
 	 * @param input InputStream to a string matrix in textcell format
 	 * @param rows number of rows in the matrix
 	 * @param cols number of columns in the matrix
@@ -461,11 +486,11 @@ public class Connection implements Closeable
 	public double[][] convertToDoubleMatrix(InputStream input, int rows, int cols) throws IOException {
 		return convertToDoubleMatrix(input, rows, cols, DataExpression.FORMAT_TYPE_VALUE_TEXT);
 	}
-	
+
 	/**
 	 * Converts an input stream of a string matrix in csv or textcell format
-	 * into a dense double array. 
-	 * 
+	 * into a dense double array.
+	 *
 	 * @param input InputStream to a string matrix in csv or textcell format
 	 * @param rows number of rows in the matrix
 	 * @param cols number of columns in the matrix
@@ -473,18 +498,18 @@ public class Connection implements Closeable
 	 * @return matrix as a two-dimensional double array
 	 * @throws IOException if IOException occurs
 	 */
-	public double[][] convertToDoubleMatrix(InputStream input, int rows, int cols, String format) 
-		throws IOException
+	public double[][] convertToDoubleMatrix(InputStream input, int rows, int cols, String format)
+			throws IOException
 	{
 		MatrixBlock mb = convertToMatrix(input, rows, cols, format);
 		return DataConverter.convertToDoubleMatrix(mb);
 	}
-	
+
 	/**
 	 * Converts an input string representation of a matrix in csv or textcell format
 	 * into a matrix block. The meta data string is the SystemML generated
 	 * .mtd file including the number of rows and columns.
-	 * 
+	 *
 	 * @param input string matrix in csv or textcell format
 	 * @param meta string representing SystemML matrix metadata in JSON format
 	 * @return matrix as a matrix block
@@ -495,27 +520,27 @@ public class Connection implements Closeable
 			return convertToMatrix(is, meta);
 		}
 	}
-	
+
 	/**
 	 * Converts an input stream of a string matrix in csv or textcell format
 	 * into a matrix block. The meta data string is the SystemML generated
 	 * .mtd file including the number of rows and columns.
-	 * 
+	 *
 	 * @param input InputStream to a string matrix in csv or textcell format
 	 * @param meta string representing SystemML matrix metadata in JSON format
 	 * @return matrix as a matrix block
 	 * @throws IOException if IOException occurs
 	 */
-	public MatrixBlock convertToMatrix(InputStream input, String meta) 
-		throws IOException
+	public MatrixBlock convertToMatrix(InputStream input, String meta)
+			throws IOException
 	{
 		try {
-			//parse json meta data 
+			//parse json meta data
 			JSONObject jmtd = new JSONObject(meta);
 			int rows = jmtd.getInt(DataExpression.READROWPARAM);
 			int cols = jmtd.getInt(DataExpression.READCOLPARAM);
 			String format = jmtd.getString(DataExpression.FORMAT_TYPE);
-			
+
 			//parse the input matrix
 			return convertToMatrix(input, rows, cols, format);
 		}
@@ -523,11 +548,11 @@ public class Connection implements Closeable
 			throw new IOException(ex);
 		}
 	}
-	
+
 	/**
 	 * Converts an input string representation of a matrix in textcell format
-	 * into a matrix block. 
-	 * 
+	 * into a matrix block.
+	 *
 	 * @param input string matrix in textcell format
 	 * @param rows number of rows in the matrix
 	 * @param cols number of columns in the matrix
@@ -539,11 +564,11 @@ public class Connection implements Closeable
 			return convertToMatrix(is, rows, cols);
 		}
 	}
-	
+
 	/**
 	 * Converts an input stream of a string matrix in textcell format
-	 * into a matrix block. 
-	 * 
+	 * into a matrix block.
+	 *
 	 * @param input InputStream to a string matrix in textcell format
 	 * @param rows number of rows in the matrix
 	 * @param cols number of columns in the matrix
@@ -553,11 +578,11 @@ public class Connection implements Closeable
 	public MatrixBlock convertToMatrix(InputStream input, int rows, int cols) throws IOException {
 		return convertToMatrix(input, rows, cols, DataExpression.FORMAT_TYPE_VALUE_TEXT);
 	}
-	
+
 	/**
 	 * Converts an input stream of a string matrix in csv or textcell format
-	 * into a matrix block. 
-	 * 
+	 * into a matrix block.
+	 *
 	 * @param input InputStream to a string matrix in csv or textcell format
 	 * @param rows number of rows in the matrix
 	 * @param cols number of columns in the matrix
@@ -565,36 +590,36 @@ public class Connection implements Closeable
 	 * @return matrix as a matrix block
 	 * @throws IOException if IOException occurs
 	 */
-	public MatrixBlock convertToMatrix(InputStream input, int rows, int cols, String format) 
-		throws IOException
+	public MatrixBlock convertToMatrix(InputStream input, int rows, int cols, String format)
+			throws IOException
 	{
 		MatrixBlock ret = null;
 
 		//sanity check input format
 		if(!(DataExpression.FORMAT_TYPE_VALUE_TEXT.equals(format)
-			||DataExpression.FORMAT_TYPE_VALUE_MATRIXMARKET.equals(format)
-			||DataExpression.FORMAT_TYPE_VALUE_CSV.equals(format)) ) {
+				||DataExpression.FORMAT_TYPE_VALUE_MATRIXMARKET.equals(format)
+				||DataExpression.FORMAT_TYPE_VALUE_CSV.equals(format)) ) {
 			throw new IOException("Invalid input format (expected: csv, text or mm): "+format);
 		}
-		
+
 		setLocalConfigs();
-		
+
 		try {
 			//read input matrix
-			InputInfo iinfo = DataExpression.FORMAT_TYPE_VALUE_CSV.equals(format) ? 
+			InputInfo iinfo = DataExpression.FORMAT_TYPE_VALUE_CSV.equals(format) ?
 					InputInfo.CSVInputInfo : InputInfo.TextCellInputInfo;
 			MatrixReader reader = MatrixReaderFactory.createMatrixReader(iinfo);
 			int blksz = ConfigurationManager.getBlocksize();
-			ret = reader.readMatrixFromInputStream(input, 
+			ret = reader.readMatrixFromInputStream(input,
 					rows, cols, blksz, blksz, (long)rows*cols);
 		}
 		catch(DMLRuntimeException rex) {
 			throw new IOException(rex);
 		}
-		
+
 		return ret;
 	}
-	
+
 	////////////////////////////////////////////
 	// Read frames
 	////////////////////////////////////////////
@@ -602,25 +627,25 @@ public class Connection implements Closeable
 	/**
 	 * Reads an input frame in arbitrary format from HDFS into a dense string array.
 	 * NOTE: this call currently only supports default configurations for CSV.
-	 * 
+	 *
 	 * @param fname the filename of the input frame
 	 * @return frame as a two-dimensional string array
 	 * @throws IOException if IOException occurs
 	 */
-	public String[][] readStringFrame(String fname) 
-		throws IOException
+	public String[][] readStringFrame(String fname)
+			throws IOException
 	{
 		try {
-			//read json meta data 
+			//read json meta data
 			String fnamemtd = DataExpression.getMTDFileName(fname);
 			JSONObject jmtd = new DataExpression().readMetadataFile(fnamemtd, false);
-			
-			//parse json meta data 
+
+			//parse json meta data
 			long rows = jmtd.getLong(DataExpression.READROWPARAM);
 			long cols = jmtd.getLong(DataExpression.READCOLPARAM);
 			String format = jmtd.getString(DataExpression.FORMAT_TYPE);
 			InputInfo iinfo = InputInfo.stringExternalToInputInfo(format);
-		
+
 			//read frame file
 			return readStringFrame(fname, iinfo, rows, cols);
 		}
@@ -628,11 +653,11 @@ public class Connection implements Closeable
 			throw new IOException(ex);
 		}
 	}
-	
+
 	/**
 	 * Reads an input frame in arbitrary format from HDFS into a dense string array.
 	 * NOTE: this call currently only supports default configurations for CSV.
-	 * 
+	 *
 	 * @param fname the filename of the input frame
 	 * @param iinfo InputInfo object
 	 * @param rows number of rows in the frame
@@ -640,11 +665,11 @@ public class Connection implements Closeable
 	 * @return frame as a two-dimensional string array
 	 * @throws IOException if IOException occurs
 	 */
-	public String[][] readStringFrame(String fname, InputInfo iinfo, long rows, long cols) 
-		throws IOException
+	public String[][] readStringFrame(String fname, InputInfo iinfo, long rows, long cols)
+			throws IOException
 	{
 		setLocalConfigs();
-		
+
 		try {
 			FrameReader reader = FrameReaderFactory.createFrameReader(iinfo);
 			FrameBlock mb = reader.readFrameFromHDFS(fname, rows, cols);
@@ -654,28 +679,28 @@ public class Connection implements Closeable
 			throw new IOException(ex);
 		}
 	}
-	
+
 	/**
 	 * Converts an input string representation of a frame in csv or textcell format
 	 * into a dense string array. The meta data string is the SystemML generated
 	 * .mtd file including the number of rows and columns.
-	 * 
+	 *
 	 * @param input string frame in csv or textcell format
 	 * @param meta string representing SystemML frame metadata in JSON format
 	 * @return frame as a two-dimensional string array
 	 * @throws IOException if IOException occurs
 	 */
-	public String[][] convertToStringFrame(String input, String meta) 
-		throws IOException
+	public String[][] convertToStringFrame(String input, String meta)
+			throws IOException
 	{
 		FrameBlock fb = convertToFrame(input, meta);
 		return DataConverter.convertToStringFrame(fb);
 	}
-	
+
 	/**
 	 * Converts an input stream of a string frame in textcell format
-	 * into a dense string array. 
-	 * 
+	 * into a dense string array.
+	 *
 	 * @param input string frame in textcell format
 	 * @param rows number of rows in the frame
 	 * @param cols number of columns in the frame
@@ -687,11 +712,11 @@ public class Connection implements Closeable
 			return convertToStringFrame(is, rows, cols);
 		}
 	}
-	
+
 	/**
 	 * Converts an input stream of a string frame in textcell format
-	 * into a dense string array. 
-	 * 
+	 * into a dense string array.
+	 *
 	 * @param input InputStream to a string frame in textcell format
 	 * @param rows number of rows in the frame
 	 * @param cols number of columns in the frame
@@ -701,11 +726,11 @@ public class Connection implements Closeable
 	public String[][] convertToStringFrame(InputStream input, int rows, int cols) throws IOException {
 		return convertToStringFrame(input, rows, cols, DataExpression.FORMAT_TYPE_VALUE_TEXT);
 	}
-	
+
 	/**
 	 * Converts an input stream of a string frame in csv or textcell format
-	 * into a dense string array. 
-	 * 
+	 * into a dense string array.
+	 *
 	 * @param input InputStream to a string frame in csv or textcell format
 	 * @param rows number of rows in the frame
 	 * @param cols number of columns in the frame
@@ -713,18 +738,18 @@ public class Connection implements Closeable
 	 * @return frame as a two-dimensional string array
 	 * @throws IOException if IOException occurs
 	 */
-	public String[][] convertToStringFrame(InputStream input, int rows, int cols, String format) 
-		throws IOException
+	public String[][] convertToStringFrame(InputStream input, int rows, int cols, String format)
+			throws IOException
 	{
 		FrameBlock fb = convertToFrame(input, rows, cols, format);
 		return DataConverter.convertToStringFrame(fb);
 	}
-	
+
 	/**
 	 * Converts an input string representation of a frame in csv or textcell format
 	 * into a frame block. The meta data string is the SystemML generated
 	 * .mtd file including the number of rows and columns.
-	 * 
+	 *
 	 * @param input string frame in csv or textcell format
 	 * @param meta string representing SystemML frame metadata in JSON format
 	 * @return frame as a frame block
@@ -735,27 +760,27 @@ public class Connection implements Closeable
 			return convertToFrame(is, meta);
 		}
 	}
-	
+
 	/**
 	 * Converts an input stream of a string frame in csv or textcell format
 	 * into a frame block. The meta data string is the SystemML generated
 	 * .mtd file including the number of rows and columns.
-	 * 
+	 *
 	 * @param input InputStream to a string frame in csv or textcell format
 	 * @param meta string representing SystemML frame metadata in JSON format
 	 * @return frame as a frame block
 	 * @throws IOException if IOException occurs
 	 */
-	public FrameBlock convertToFrame(InputStream input, String meta) 
-		throws IOException
+	public FrameBlock convertToFrame(InputStream input, String meta)
+			throws IOException
 	{
 		try {
-			//parse json meta data 
+			//parse json meta data
 			JSONObject jmtd = new JSONObject(meta);
 			int rows = jmtd.getInt(DataExpression.READROWPARAM);
 			int cols = jmtd.getInt(DataExpression.READCOLPARAM);
 			String format = jmtd.getString(DataExpression.FORMAT_TYPE);
-			
+
 			//parse the input frame
 			return convertToFrame(input, rows, cols, format);
 		}
@@ -763,11 +788,11 @@ public class Connection implements Closeable
 			throw new IOException(ex);
 		}
 	}
-	
+
 	/**
 	 * Converts an input string representation of a frame in textcell format
-	 * into a frame block. 
-	 * 
+	 * into a frame block.
+	 *
 	 * @param input string frame in textcell format
 	 * @param rows number of rows in the frame
 	 * @param cols number of columns in the frame
@@ -779,11 +804,11 @@ public class Connection implements Closeable
 			return convertToFrame(is, rows, cols);
 		}
 	}
-	
+
 	/**
 	 * Converts an input stream of a string frame in textcell format
-	 * into a frame block. 
-	 * 
+	 * into a frame block.
+	 *
 	 * @param input InputStream to a string frame in textcell format
 	 * @param rows number of rows in the frame
 	 * @param cols number of columns in the frame
@@ -793,11 +818,11 @@ public class Connection implements Closeable
 	public FrameBlock convertToFrame(InputStream input, int rows, int cols) throws IOException {
 		return convertToFrame(input, rows, cols, DataExpression.FORMAT_TYPE_VALUE_TEXT);
 	}
-	
+
 	/**
 	 * Converts an input stream of a frame in csv or textcell format
-	 * into a frame block. 
-	 * 
+	 * into a frame block.
+	 *
 	 * @param input InputStream to a string frame in csv or textcell format
 	 * @param rows number of rows in the frame
 	 * @param cols number of columns in the frame
@@ -805,23 +830,23 @@ public class Connection implements Closeable
 	 * @return frame as a frame block
 	 * @throws IOException if IOException occurs
 	 */
-	public FrameBlock convertToFrame(InputStream input, int rows, int cols, String format) 
-		throws IOException
+	public FrameBlock convertToFrame(InputStream input, int rows, int cols, String format)
+			throws IOException
 	{
 		FrameBlock ret = null;
-	
+
 		//sanity check input format
 		if(!(DataExpression.FORMAT_TYPE_VALUE_TEXT.equals(format)
-			||DataExpression.FORMAT_TYPE_VALUE_MATRIXMARKET.equals(format)
-			||DataExpression.FORMAT_TYPE_VALUE_CSV.equals(format))) {
+				||DataExpression.FORMAT_TYPE_VALUE_MATRIXMARKET.equals(format)
+				||DataExpression.FORMAT_TYPE_VALUE_CSV.equals(format))) {
 			throw new IOException("Invalid input format (expected: csv, text or mm): "+format);
 		}
-		
+
 		setLocalConfigs();
-		
+
 		try {
 			//read input frame
-			InputInfo iinfo = DataExpression.FORMAT_TYPE_VALUE_CSV.equals(format) ? 
+			InputInfo iinfo = DataExpression.FORMAT_TYPE_VALUE_CSV.equals(format) ?
 					InputInfo.CSVInputInfo : InputInfo.TextCellInputInfo;
 			FrameReader reader = FrameReaderFactory.createFrameReader(iinfo);
 			ret = reader.readFrameFromInputStream(input, rows, cols);
@@ -829,19 +854,19 @@ public class Connection implements Closeable
 		catch(DMLRuntimeException rex) {
 			throw new IOException(rex);
 		}
-		
+
 		return ret;
 	}
-	
+
 	////////////////////////////////////////////
 	// Read transform meta data
 	////////////////////////////////////////////
-	
+
 	/**
 	 * Reads transform meta data from an HDFS file path and converts it into an in-memory
 	 * FrameBlock object. The column names in the meta data file 'column.names' is processed
 	 * with default separator ','.
-	 * 
+	 *
 	 * @param metapath  hdfs file path to meta data directory
 	 * @return FrameBlock object representing transform metadata
 	 * @throws IOException if IOException occurs
@@ -849,12 +874,12 @@ public class Connection implements Closeable
 	public FrameBlock readTransformMetaDataFromFile(String metapath) throws IOException {
 		return readTransformMetaDataFromFile(null, metapath, TfUtils.TXMTD_SEP);
 	}
-	
+
 	/**
 	 * Reads transform meta data from an HDFS file path and converts it into an in-memory
 	 * FrameBlock object. The column names in the meta data file 'column.names' is processed
 	 * with default separator ','.
-	 * 
+	 *
 	 * @param spec      transform specification as json string
 	 * @param metapath  hdfs file path to meta data directory
 	 * @return FrameBlock object representing transform metadata
@@ -863,11 +888,11 @@ public class Connection implements Closeable
 	public FrameBlock readTransformMetaDataFromFile(String spec, String metapath) throws IOException {
 		return readTransformMetaDataFromFile(spec, metapath, TfUtils.TXMTD_SEP);
 	}
-	
+
 	/**
 	 * Reads transform meta data from an HDFS file path and converts it into an in-memory
 	 * FrameBlock object.
-	 * 
+	 *
 	 * @param spec      transform specification as json string
 	 * @param metapath  hdfs file path to meta data directory
 	 * @param colDelim  separator for processing column names in the meta data file 'column.names'
@@ -877,12 +902,12 @@ public class Connection implements Closeable
 	public FrameBlock readTransformMetaDataFromFile(String spec, String metapath, String colDelim) throws IOException {
 		return TfMetaUtils.readTransformMetaDataFromFile(spec, metapath, colDelim);
 	}
-	
+
 	/**
 	 * Reads transform meta data from the class path and converts it into an in-memory
 	 * FrameBlock object. The column names in the meta data file 'column.names' is processed
 	 * with default separator ','.
-	 * 
+	 *
 	 * @param metapath  resource path to meta data directory
 	 * @return FrameBlock object representing transform metadata
 	 * @throws IOException if IOException occurs
@@ -890,12 +915,12 @@ public class Connection implements Closeable
 	public FrameBlock readTransformMetaDataFromPath(String metapath) throws IOException {
 		return readTransformMetaDataFromPath(null, metapath, TfUtils.TXMTD_SEP);
 	}
-	
+
 	/**
 	 * Reads transform meta data from the class path and converts it into an in-memory
 	 * FrameBlock object. The column names in the meta data file 'column.names' is processed
 	 * with default separator ','.
-	 * 
+	 *
 	 * @param spec      transform specification as json string
 	 * @param metapath  resource path to meta data directory
 	 * @return FrameBlock object representing transform metadata
@@ -904,11 +929,11 @@ public class Connection implements Closeable
 	public FrameBlock readTransformMetaDataFromPath(String spec, String metapath) throws IOException {
 		return readTransformMetaDataFromPath(spec, metapath, TfUtils.TXMTD_SEP);
 	}
-	
+
 	/**
 	 * Reads transform meta data from the class path and converts it into an in-memory
 	 * FrameBlock object.
-	 * 
+	 *
 	 * @param spec      transform specification as json string
 	 * @param metapath  resource path to meta data directory
 	 * @param colDelim  separator for processing column names in the meta data file 'column.names'
@@ -918,7 +943,7 @@ public class Connection implements Closeable
 	public FrameBlock readTransformMetaDataFromPath(String spec, String metapath, String colDelim) throws IOException {
 		return TfMetaUtils.readTransformMetaDataFromPath(spec, metapath, colDelim);
 	}
-	
+
 	private void setLocalConfigs() {
 		//set thread-local configurations for compilation and read
 		ConfigurationManager.setLocalConfig(_dmlconf);

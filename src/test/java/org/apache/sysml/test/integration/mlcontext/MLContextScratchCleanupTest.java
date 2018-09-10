@@ -98,9 +98,6 @@ public class MLContextScratchCleanupTest extends AutomatedTestBase
 			Script script1 = dmlFromFile(dml1).in("$rows", rows).in("$cols", cols).out("X");
 			Matrix X = ml.execute(script1).getMatrix("X");
 			
-			//clear in-memory/cached data to emulate on-disk storage
-			X.toMatrixObject().clearData();
-			
 			Script script2 = dmlFromFile(dml2).in("X", X).out("z");
 			String z = ml.execute(script2).getString("z");
 			
