@@ -59,21 +59,24 @@ class LocalityAwareScheduler(override val timeout: Duration) extends BatchingSch
     override def schedule(executor: JmlcExecutor) : Array[SchedulingRequest] = {
         var ret = Array[SchedulingRequest]()
         val localQueue = executorQueues.get(executor)
+        val globalQueue = globalSchedulingQueues.get(executor.getExecType)
 
-        if (localQueue.size() > 0 || globalSchedulingQueues.get(executor.getExecType).size() > 0) {
+        if (localQueue.size() > 0 || globalQueue.size() > 0) {
             dummyResponse.synchronized {
-                if (localQueue.size() > 0 || globalSchedulingQueues.get(executor.getExecType).size() > 0) {
+                if (localQueue.size() > 0 || globalQueue.size() > 0) {
                     val localExecTime = localQueue.getExpectedExecutionTime
-                    val globalExecTime = globalSchedulingQueues.get(executor.getExecType).getExpectedExecutionTime
-                    val batch = if (localExecTime >= globalExecTime)
-                        localQueue.dequeue() else  globalSchedulingQueues.get(executor.getExecType).dequeue()
+                    val globalExecTime = globalQueue.getExpectedExecutionTime
+                    val isLocalMode = localExecTime >= globalExecTime
+                    val batch = if (isLocalMode) localQueue.dequeue() else  globalQueue.dequeue()
                     val model = modelManager.get(batch.modelName)
                     val numToDequeue = getLargestPossibleBatchSize(
                         min(batch.size, modelQueues.get(batch.modelName).size()), model.memoryEstimator)
                     if (numToDequeue > 0) {
                         for (_ <- 0 until numToDequeue) {
-                            ret :+= modelQueues.get(batch.modelName).poll()
-                            assert(ret != null, "Something is wrong - request should not be null!")
+                            val nextRequest = modelQueues.get(batch.modelName).poll()
+                            assert(nextRequest != null, "Something is wrong - request should not be null!")
+                            nextRequest.statistics.execLocal = if (isLocalMode) 1 else 0
+                            ret :+= nextRequest
                         }
 
                         if (executor.prevModel.nonEmpty) {

@@ -56,7 +56,8 @@ case class RequestStatistics(var batchSize: Int = -1,
                              var batchingTime: Long = -1,
                              var unbatchingTime: Long = -1,
                              var queueWaitTime: Long = -1,
-                             var queueSize: Int = -1)
+                             var queueSize: Int = -1,
+                             var execLocal: Int = 0)
 case class PredictionRequestExternal(name: String, data: Array[Double], rows: Int, cols: Int)
 case class PredictionResponseExternal(response: Array[Double], rows: Int, cols: Int, statistics: RequestStatistics)
 
@@ -75,7 +76,7 @@ case class PredictionResponse(response: MatrixBlock, batchSize: Int, statistics:
 case class MatrixBlockContainer(numRows: Long, numCols: Long, nnz: Long, sum: Double, data: MatrixBlock)
 
 trait PredictionJsonProtocol extends SprayJsonSupport with DefaultJsonProtocol {
-    implicit val RequestStatisticsFormat = jsonFormat11(RequestStatistics)
+    implicit val RequestStatisticsFormat = jsonFormat12(RequestStatistics)
     implicit val predictionRequestExternalFormat = jsonFormat4(PredictionRequestExternal)
     implicit val predictionResponseExternalFormat = jsonFormat4(PredictionResponseExternal)
 }
@@ -146,6 +147,7 @@ object PredictionService extends PredictionJsonProtocol with AddModelJsonProtoco
         akka.http.host-connection-pool.idle-timeout=infinite
         akka.http.host-connection-pool.client.idle-timeout=infinite
         akka.http.server.max-connections=100000
+
     """)
     val basicConf = ConfigFactory.load()
     val combined = customConf.withFallback(basicConf)
@@ -204,9 +206,9 @@ object PredictionService extends PredictionJsonProtocol with AddModelJsonProtoco
         var models = Map[String, Model]()
 
         // TODO: Set the scheduler using factory
-        scheduler = new LocalityAwareScheduler(timeout)
+//        scheduler = new LocalityAwareScheduler(timeout)
         //scheduler = new BasicBatchingScheduler(timeout)
-        //scheduler = new NonBatchingScheduler(timeout)
+        scheduler = new NonBatchingScheduler(timeout)
         val gpus = null
         val numCores = Runtime.getRuntime.availableProcessors() - 1
 //        val numCores = 2
