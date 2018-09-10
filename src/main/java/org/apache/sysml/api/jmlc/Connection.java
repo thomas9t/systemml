@@ -280,42 +280,35 @@ public class Connection implements Closeable
 				parsePyDML ? ScriptType.PYDML : ScriptType.DML, null, script));
 		setLocalConfigs();
 
-		Program rtprog= ScriptExecutorUtils.compileRuntimeProgram(script, nsscripts, args, inputs, outputs,
-					parsePyDML ? ScriptType.PYDML : ScriptType.DML, _dmlconf, SystemMLAPI.JMLC);
-
-
-		//return newly create precompiled script
-		PreparedScript ret = new PreparedScript(rtprog, inputs, outputs, _dmlconf, _cconf);
-		ret._gpuCtx = (useGPU) ? getAndInitializeGpuContext(gpuIndex) : null;
-		return ret;
-	}
-
-	/**
-	 * Lazy initialization of the GPU context - only performed once per Connection instance
-	 */
-	private List<GPUContext> getAndInitializeGpuContext(int gpuIndex) {
-		if (AVAILABLE_GPU_CONTEXTS == null) {
+		List<GPUContext> _gpuCtx = null;
+		GPUContextPool.AVAILABLE_GPUS = "-1"; // use all the GPUs in JMLC mode
+		Program rtprog = ScriptExecutorUtils.compileRuntimeProgram(script, nsscripts, args, inputs, outputs,
+				parsePyDML ? ScriptType.PYDML : ScriptType.DML, _dmlconf, SystemMLAPI.JMLC);
+		if (useGPU && AVAILABLE_GPU_CONTEXTS == null) {
 			synchronized (Connection.class) {
 				if (AVAILABLE_GPU_CONTEXTS == null) {
 					// Initialize the GPUs if not already
-					String oldAvailableGpus = GPUContextPool.AVAILABLE_GPUS;
-					GPUContextPool.AVAILABLE_GPUS = "-1"; // use all the GPUs in JMLC mode
 					List<GPUContext> availableCtx = GPUContextPool.getAllGPUContexts();
 					AVAILABLE_GPU_CONTEXTS = availableCtx.toArray(new GPUContext[availableCtx.size()]);
-					GPUContextPool.AVAILABLE_GPUS = oldAvailableGpus;
 				}
 			}
 		}
-		if(AVAILABLE_GPU_CONTEXTS.length == 0)
-			throw new DMLRuntimeException("No GPU Context in available");
-		else if(gpuIndex < 0 || gpuIndex >= AVAILABLE_GPU_CONTEXTS.length)
-			throw new DMLRuntimeException("Cannot use the GPU " + gpuIndex +
-					". Valid values: [0, " + (AVAILABLE_GPU_CONTEXTS.length-1) + "]");
-		// For simplicity of the API, the initial version statically associates a GPU to the prepared script.
-		// We can revisit this assumption if it turns out to be the overhead.
-		List<GPUContext> _gpuCtx = new ArrayList<>();
-		_gpuCtx.add(AVAILABLE_GPU_CONTEXTS[gpuIndex]);
-		return _gpuCtx;
+		if(useGPU) {
+			if(AVAILABLE_GPU_CONTEXTS == null || AVAILABLE_GPU_CONTEXTS.length == 0)
+				throw new DMLRuntimeException("No GPU Context in available");
+			else if(gpuIndex < 0 || gpuIndex >= AVAILABLE_GPU_CONTEXTS.length)
+				throw new DMLRuntimeException("Cannot use the GPU " + gpuIndex +
+						". Valid values: [0, " + (AVAILABLE_GPU_CONTEXTS.length-1) + "]");
+			// For simplicity of the API, the initial version statically associates a GPU to the prepared script.
+			// We can revisit this assumption if it turns out to be the overhead.
+			_gpuCtx = new ArrayList<GPUContext>();
+			_gpuCtx.add(AVAILABLE_GPU_CONTEXTS[gpuIndex]);
+		}
+
+		//return newly create precompiled script
+		PreparedScript ret = new PreparedScript(rtprog, inputs, outputs, _dmlconf, _cconf);
+		ret._gpuCtx = _gpuCtx;
+		return ret;
 	}
 
 	/**
