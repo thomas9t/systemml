@@ -31,6 +31,9 @@ import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Random;
 import java.util.concurrent.atomic.AtomicLong;
+
+import org.apache.commons.logging.Log;
+import org.apache.commons.logging.LogFactory;
 import org.apache.sysml.runtime.DMLRuntimeException;
 import org.apache.sysml.runtime.controlprogram.caching.MatrixObject;
 import org.apache.sysml.runtime.matrix.data.MatrixBlock;
@@ -56,6 +59,7 @@ import org.apache.sysml.runtime.util.FastBufferedDataOutputStream;
  * - remove(String key);
  */
 public class PersistentLRUCache extends LinkedHashMap<String, ValueWrapper> {
+	static final Log LOG = LogFactory.getLog(PersistentLRUCache.class.getName());
 	private static final long serialVersionUID = -6838798881747433047L;
 	private final String _prefixFilePath;
 	private final AtomicLong _currentNumBytes = new AtomicLong();
@@ -229,6 +233,8 @@ class DataWrapper {
 	}
 	
 	public void write() throws FileNotFoundException, IOException {
+		if(PersistentLRUCache.LOG.isDebugEnabled())
+			PersistentLRUCache.LOG.debug("Writing value for the key " + _key + " to disk.");
 		if(_dArr != null) {
 			try (ObjectOutputStream os = new ObjectOutputStream(new FileOutputStream(_cache.getFilePath(_key)))) {
 				os.writeInt(_dArr.length);
@@ -260,6 +266,8 @@ class DataWrapper {
 	}
 	
 	static DataWrapper loadDoubleArr(String key, PersistentLRUCache cache) throws FileNotFoundException, IOException {
+		if(PersistentLRUCache.LOG.isDebugEnabled())
+			PersistentLRUCache.LOG.debug("Loading double array the key " + key + " from the disk.");
 		double [] ret;
 		try (ObjectInputStream is = new ObjectInputStream(new FileInputStream(cache.getFilePath(key)))) {
 			int size = is.readInt();
@@ -273,6 +281,8 @@ class DataWrapper {
 	}
 	
 	static DataWrapper loadFloatArr(String key, PersistentLRUCache cache) throws FileNotFoundException, IOException {
+		if(PersistentLRUCache.LOG.isDebugEnabled())
+			PersistentLRUCache.LOG.debug("Loading float array the key " + key + " from the disk.");
 		float [] ret;
 		try (ObjectInputStream is = new ObjectInputStream(new FileInputStream(cache.getFilePath(key)))) {
 			int size = is.readInt();
@@ -286,6 +296,8 @@ class DataWrapper {
 	}
 	
 	static DataWrapper loadMatrixBlock(String key, PersistentLRUCache cache) throws FileNotFoundException, IOException {
+		if(PersistentLRUCache.LOG.isDebugEnabled())
+			PersistentLRUCache.LOG.debug("Loading matrix block array the key " + key + " from the disk.");
 		MatrixBlock ret;
 		try (FastBufferedDataInputStream is = new FastBufferedDataInputStream(new ObjectInputStream(new FileInputStream(cache.getFilePath(key))))) {
 			long size = is.readLong();
