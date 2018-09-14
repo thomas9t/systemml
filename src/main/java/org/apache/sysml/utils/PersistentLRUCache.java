@@ -140,7 +140,10 @@ public class PersistentLRUCache extends LinkedHashMap<String, ValueWrapper> {
 	}
 	
 	void makeRecent(String key) {
-		super.get(key);
+		// super.get(key); // didn't work.
+		ValueWrapper value = super.get(key);
+		super.remove(key);
+		super.put(key, value);
 	}
 	
 	@Override
