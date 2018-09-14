@@ -59,6 +59,22 @@ import org.apache.sysml.runtime.util.FastBufferedDataOutputStream;
  * - void clear();
  * - boolean containsKey(String key)
  * - remove(String key);
+ * 
+ * Instead of using generic types i.e. LinkedHashMap<String, ?>,  we are allowing the cache to store values of different types.
+ * ValueWrapper is a container in this case to store the actual values (i.e. double[]. float[] or MatrixBlock).
+ * 
+ * The cache can be used in two modes:
+ * - Read-only mode (only applicable for MatrixBlock keys): 
+ *   = We delete the value when capacity is exceeded or when GC occurs. 
+ *   = When get is invoked on the deleted key, the key is treated as the full path and MatrixBlock is read from that path.
+ * - General case: 
+ *   = We persist the values to the file system (into temporary directory) when capacity is exceeded or when GC occurs. 
+ *   = When get is invoked on the deleted key, the key is treated as the file name (not the absolute path) and MatrixBlock is read from that path.
+ * 
+ * This class does not assume minimum capacity and hence only soft references.
+ * 
+ * To test this class, please use the below command:
+ * java -cp systemml-*-standalone.jar:commons-lang3-3.8.jar org.apache.sysml.utils.PersistentLRUCache.
  */
 public class PersistentLRUCache extends LinkedHashMap<String, ValueWrapper> {
 	static final Log LOG = LogFactory.getLog(PersistentLRUCache.class.getName());
@@ -67,6 +83,7 @@ public class PersistentLRUCache extends LinkedHashMap<String, ValueWrapper> {
 	final AtomicLong _currentNumBytes = new AtomicLong();
 	private final long _maxNumBytes;
 	Random _rand = new Random();
+	boolean isInReadOnlyMode;
 	
 	public static void main(String [] args) throws IOException {
 		org.apache.log4j.Logger.getRootLogger().setLevel(Level.DEBUG);
@@ -75,9 +92,19 @@ public class PersistentLRUCache extends LinkedHashMap<String, ValueWrapper> {
 		PersistentLRUCache cache = new PersistentLRUCache((long)(numBytesInMB*25));
 		for(int i = 0; i < 30; ++i) {
 			LOG.debug("Putting a double array of size 1MB.");
-			cache.put(">>" + i + "<<", new double[numDoubleInMB]);
+			cache.put("file_" + i, new double[numDoubleInMB]);
 		}
 		cache.clear();
+	}
+	
+	/**
+	 * When enabled, the cache will discard the values instead of writing it to the local file system.
+	 * 
+	 * @return this
+	 */
+	public PersistentLRUCache enableReadOnlyMode(boolean enable) {
+		isInReadOnlyMode = enable;
+		return this;
 	}
 	
 	/**
@@ -309,57 +336,62 @@ class DataWrapper {
 		if(_key.equals(_cache.dummyKey))
 			return;
 		_cache.makeRecent(_key); // Make it recent.
-		String debugSuffix = null;
-		if(PersistentLRUCache.LOG.isDebugEnabled()) {
-			if(isBeingGarbageCollected)
-				debugSuffix = " (is being garbage collected).";
-			else
-				debugSuffix = " (capacity exceeded).";
-		}
+		
 		if(_dArr != null || _fArr != null || _mb != null || _mo != null) {
 			_cache._currentNumBytes.addAndGet(-getSize());
 		}
-		if(_dArr != null) {
-			try (ObjectOutputStream os = new ObjectOutputStream(new FileOutputStream(_cache.getFilePath(_key)))) {
-				os.writeInt(_dArr.length);
-				for(int i = 0; i < _dArr.length; i++) {
-					os.writeDouble(_dArr[i]);
+		
+		if(!_cache.isInReadOnlyMode) {
+			String debugSuffix = null;
+			if(PersistentLRUCache.LOG.isDebugEnabled()) {
+				if(isBeingGarbageCollected)
+					debugSuffix = " (is being garbage collected).";
+				else
+					debugSuffix = " (capacity exceeded).";
+			}
+			
+			if(_dArr != null) {
+				try (ObjectOutputStream os = new ObjectOutputStream(new FileOutputStream(_cache.getFilePath(_key)))) {
+					os.writeInt(_dArr.length);
+					for(int i = 0; i < _dArr.length; i++) {
+						os.writeDouble(_dArr[i]);
+					}
 				}
+				if(PersistentLRUCache.LOG.isDebugEnabled())
+					PersistentLRUCache.LOG.debug("Writing value (double[] of size " + getSize() + " bytes) for the key " + _key + " to disk" + debugSuffix);
 			}
-			if(PersistentLRUCache.LOG.isDebugEnabled())
-				PersistentLRUCache.LOG.debug("Writing value (double[] of size " + getSize() + " bytes) for the key " + _key + " to disk" + debugSuffix);
-			_dArr = null;
-		}
-		else if(_fArr != null) {
-			try (ObjectOutputStream os = new ObjectOutputStream(new FileOutputStream(_cache.getFilePath(_key)))) {
-				os.writeInt(_fArr.length);
-				for(int i = 0; i < _fArr.length; i++) {
-					os.writeFloat(_fArr[i]);
+			else if(_fArr != null) {
+				try (ObjectOutputStream os = new ObjectOutputStream(new FileOutputStream(_cache.getFilePath(_key)))) {
+					os.writeInt(_fArr.length);
+					for(int i = 0; i < _fArr.length; i++) {
+						os.writeFloat(_fArr[i]);
+					}
 				}
+				if(PersistentLRUCache.LOG.isDebugEnabled())
+					PersistentLRUCache.LOG.debug("Writing value (float[] of size " + getSize() + " bytes) for the key " + _key + " to disk" + debugSuffix);
 			}
-			if(PersistentLRUCache.LOG.isDebugEnabled())
-				PersistentLRUCache.LOG.debug("Writing value (float[] of size " + getSize() + " bytes) for the key " + _key + " to disk" + debugSuffix);
-			_fArr = null;
-		}
-		else if(_mb != null) {
-			try(FastBufferedDataOutputStream os = new FastBufferedDataOutputStream(new ObjectOutputStream(new FileOutputStream(_cache.getFilePath(_key))))) {
-				os.writeLong(_mb.getInMemorySize());
-				_mb.write(os);
+			else if(_mb != null) {
+				try(FastBufferedDataOutputStream os = new FastBufferedDataOutputStream(new ObjectOutputStream(new FileOutputStream(_cache.getFilePath(_key))))) {
+					os.writeLong(_mb.getInMemorySize());
+					_mb.write(os);
+				}
+				if(PersistentLRUCache.LOG.isDebugEnabled())
+					PersistentLRUCache.LOG.debug("Writing value (MatrixBlock of size " + getSize() + " bytes) for the key " + _key + " to disk" + debugSuffix);
 			}
-			if(PersistentLRUCache.LOG.isDebugEnabled())
-				PersistentLRUCache.LOG.debug("Writing value (MatrixBlock of size " + getSize() + " bytes) for the key " + _key + " to disk" + debugSuffix);
-			_mb = null;
+			else if(_mo != null) {
+				throw new DMLRuntimeException("Not implemented");
+			}
+			else {
+				if(PersistentLRUCache.LOG.isDebugEnabled())
+					PersistentLRUCache.LOG.debug("Skipping writing of the key " + _key + " to disk as the value is already written" + debugSuffix);
+			}
 		}
-		else if(_mo != null) {
-			throw new DMLRuntimeException("Not implemented");
-		}
-		else {
-			if(PersistentLRUCache.LOG.isDebugEnabled())
-				PersistentLRUCache.LOG.debug("Skipping writing of the key " + _key + " to disk as the value is already written" + debugSuffix);
-		}
+		_dArr = null; _fArr = null; _mb = null; _mo = null;
 	}
 	
 	static DataWrapper loadDoubleArr(String key, PersistentLRUCache cache) throws FileNotFoundException, IOException {
+		if(cache.isInReadOnlyMode)
+			throw new IOException("Read-only mode is only supported for MatrixBlock.");
 		if(PersistentLRUCache.LOG.isDebugEnabled())
 			PersistentLRUCache.LOG.debug("Loading double array the key " + key + " from the disk.");
 		double [] ret;
@@ -375,6 +407,8 @@ class DataWrapper {
 	}
 	
 	static DataWrapper loadFloatArr(String key, PersistentLRUCache cache) throws FileNotFoundException, IOException {
+		if(cache.isInReadOnlyMode)
+			throw new IOException("Read-only mode is only supported for MatrixBlock.");
 		if(PersistentLRUCache.LOG.isDebugEnabled())
 			PersistentLRUCache.LOG.debug("Loading float array the key " + key + " from the disk.");
 		float [] ret;
@@ -392,12 +426,17 @@ class DataWrapper {
 	static DataWrapper loadMatrixBlock(String key, PersistentLRUCache cache) throws FileNotFoundException, IOException {
 		if(PersistentLRUCache.LOG.isDebugEnabled())
 			PersistentLRUCache.LOG.debug("Loading matrix block array the key " + key + " from the disk.");
-		MatrixBlock ret;
-		try (FastBufferedDataInputStream is = new FastBufferedDataInputStream(new ObjectInputStream(new FileInputStream(cache.getFilePath(key))))) {
-			long size = is.readLong();
-			cache.ensureCapacity(size);
-			ret = new MatrixBlock();
-			ret.readFields(is);
+		MatrixBlock ret = null;
+		if(cache.isInReadOnlyMode) {
+			// TODO: Anthony
+		}
+		else {
+			try (FastBufferedDataInputStream is = new FastBufferedDataInputStream(new ObjectInputStream(new FileInputStream(cache.getFilePath(key))))) {
+				long size = is.readLong();
+				cache.ensureCapacity(size);
+				ret = new MatrixBlock();
+				ret.readFields(is);
+			}
 		}
 		return new DataWrapper(key, ret, cache);
 	}
