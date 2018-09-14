@@ -139,6 +139,10 @@ public class PersistentLRUCache extends LinkedHashMap<String, ValueWrapper> {
 		throw new DMLRuntimeException("Incorrect usage: Use getAsDoubleArray, getAsFloatArray or getAsMatrixBlock instead.");
 	}
 	
+	void makeRecent(String key) {
+		super.get(key);
+	}
+	
 	@Override
 	public void clear() {
 		super.clear();
@@ -182,7 +186,7 @@ public class PersistentLRUCache extends LinkedHashMap<String, ValueWrapper> {
 						if(data != null) {
 							data.write(); // Write the eldest entry to disk if not garbage collected.
 						}
-						super.get(_eldest.getKey()); // Make eldest younger.
+						makeRecent(_eldest.getKey()); // Make recent.
 					}
 					maxIter--;
 				}
@@ -300,7 +304,7 @@ class DataWrapper {
 	public synchronized void write() throws FileNotFoundException, IOException {
 		if(_key.equals(_cache.dummyKey))
 			return;
-		_cache.get(_key); // Make it recent.
+		_cache.makeRecent(_key); // Make it recent.
 		if(_dArr != null || _fArr != null || _mb != null || _mo != null) {
 			_cache._currentNumBytes.addAndGet(-getSize());
 		}
