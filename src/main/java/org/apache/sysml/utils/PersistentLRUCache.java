@@ -73,8 +73,8 @@ public class PersistentLRUCache extends LinkedHashMap<String, ValueWrapper> {
 		double numBytesInMB = 1e+7;
 		int numDoubleInMB = (int) (numBytesInMB / 8);
 		PersistentLRUCache cache = new PersistentLRUCache((long)(numBytesInMB*25));
-		for(int i = 0; i < 30; i++) {
-			cache.put(">>" + i, new double[numDoubleInMB]);
+		for(int i = 0; i < 30; ++i) {
+			cache.put(">>" + i + "<<", new double[numDoubleInMB]);
 		}
 		cache.clear();
 	}
@@ -91,27 +91,21 @@ public class PersistentLRUCache extends LinkedHashMap<String, ValueWrapper> {
 		_prefixFilePath = tmp.getAbsolutePath();
 	}
 	public ValueWrapper put(String key, double[] value) throws FileNotFoundException, IOException {
-		ValueWrapper prev = null;
-		if(containsKey(key))
-			prev = remove(key);
-		ensureCapacity(value.length*Double.BYTES);
-		super.put(key, new ValueWrapper(new DataWrapper(key, value, this)));
-		return prev;
+		return putImplm(key, new ValueWrapper(new DataWrapper(key, value, this)), value.length*Double.BYTES);
 	}
 	public ValueWrapper put(String key, float[] value) throws FileNotFoundException, IOException {
-		ValueWrapper prev = null;
-		if(containsKey(key))
-			prev = remove(key);
-		ensureCapacity(value.length*Float.BYTES);
-		super.put(key, new ValueWrapper(new DataWrapper(key, value, this)));
-		return prev;
+		return putImplm(key, new ValueWrapper(new DataWrapper(key, value, this)), value.length*Float.BYTES);
 	}
 	public ValueWrapper put(String key, MatrixBlock value) throws FileNotFoundException, IOException {
+		return putImplm(key, new ValueWrapper(new DataWrapper(key, value, this)), value.getInMemorySize());
+	}
+	
+	private ValueWrapper putImplm(String key, ValueWrapper value, long sizeInBytes) throws FileNotFoundException, IOException {
 		ValueWrapper prev = null;
 		if(containsKey(key))
 			prev = remove(key);
-		ensureCapacity(value.getInMemorySize());
-		super.put(key, new ValueWrapper(new DataWrapper(key, value, this)));
+		ensureCapacity(sizeInBytes);
+		super.put(key, value);
 		return prev;
 	}
 	
