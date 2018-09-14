@@ -42,13 +42,14 @@ import org.apache.sysml.runtime.util.FastBufferedDataOutputStream;
 
 /**
  * Simple utility to store double[], float[] and MatrixBlock in-memory.
+ * It is designed to guard against OOM by using soft reference as well as max capacity. 
  * When memory is full or if capacity is exceeded, SimplePersistingCache stores the least recently used values into the local filesystem.
  * Assumption: GC occurs before an OutOfMemoryException, and GC requires prior finalize call.
  * 
  * The user should use custom put and get methods:
- * - void put(String key, double[] value);
- * - void put(String key, float[] value);
- * - void put(String key, MatrixBlock value);
+ * - put(String key, double[] value);
+ * - put(String key, float[] value);
+ * - put(String key, MatrixBlock value);
  * - double [] getAsDoubleArray(String key);
  * - float [] getAsFloatArray(String key);
  * - MatrixBlock getAsMatrixBlock(String key);
@@ -61,9 +62,11 @@ import org.apache.sysml.runtime.util.FastBufferedDataOutputStream;
 public class PersistentLRUCache extends LinkedHashMap<String, ValueWrapper> {
 	static final Log LOG = LogFactory.getLog(PersistentLRUCache.class.getName());
 	private static final long serialVersionUID = -6838798881747433047L;
-	private final String _prefixFilePath;
+	private String _prefixFilePath;
 	private final AtomicLong _currentNumBytes = new AtomicLong();
 	private final long _maxNumBytes;
+	Random _rand = new Random();
+	
 	
 	/**
 	 * Creates a persisting cache
@@ -72,22 +75,77 @@ public class PersistentLRUCache extends LinkedHashMap<String, ValueWrapper> {
 	 */
 	public PersistentLRUCache(long maxNumBytes) throws IOException {
 		_maxNumBytes = maxNumBytes;
-		Random rand = new Random();
-		File tmp = Files.createTempDirectory("systemml_" + Math.abs(rand.nextLong())).toFile();
+		File tmp = Files.createTempDirectory("systemml_" + Math.abs(_rand.nextLong())).toFile();
 		tmp.deleteOnExit();
 		_prefixFilePath = tmp.getAbsolutePath();
 	}
-	public void put(String key, double[] value) throws FileNotFoundException, IOException {
+	public ValueWrapper put(String key, double[] value) throws FileNotFoundException, IOException {
+		ValueWrapper prev = null;
+		if(containsKey(key))
+			prev = remove(key);
 		ensureCapacity(value.length*Double.BYTES);
-		this.put(key, new ValueWrapper(new DataWrapper(key, value, this)));
+		super.put(key, new ValueWrapper(new DataWrapper(key, value, this)));
+		return prev;
 	}
-	public void put(String key, float[] value) throws FileNotFoundException, IOException {
+	public ValueWrapper put(String key, float[] value) throws FileNotFoundException, IOException {
+		ValueWrapper prev = null;
+		if(containsKey(key))
+			prev = remove(key);
 		ensureCapacity(value.length*Float.BYTES);
-		this.put(key, new ValueWrapper(new DataWrapper(key, value, this)));
+		super.put(key, new ValueWrapper(new DataWrapper(key, value, this)));
+		return prev;
 	}
-	public void put(String key, MatrixBlock value) throws FileNotFoundException, IOException {
+	public ValueWrapper put(String key, MatrixBlock value) throws FileNotFoundException, IOException {
+		ValueWrapper prev = null;
+		if(containsKey(key))
+			prev = remove(key);
 		ensureCapacity(value.getInMemorySize());
-		this.put(key, new ValueWrapper(new DataWrapper(key, value, this)));
+		super.put(key, new ValueWrapper(new DataWrapper(key, value, this)));
+		return prev;
+	}
+	
+	@Override
+	public ValueWrapper remove(Object key) {
+		ValueWrapper prev = super.remove(key);
+		if(prev != null) {
+			long size = prev.getSize();
+			if(size > 0)
+				_currentNumBytes.addAndGet(-size);
+			prev.remove();
+		}
+		return prev;
+	}
+	
+	@Override
+	public ValueWrapper put(String key, ValueWrapper value) {
+		// super.put(key, value);
+		throw new DMLRuntimeException("Incorrect usage: Value should be of type double[], float[], or MatrixBlock");
+	}
+	
+	@Override
+	public void putAll(Map<? extends String, ? extends ValueWrapper> m) {
+		// super.putAll(m);
+		throw new DMLRuntimeException("Incorrect usage: Value should be of type double[], float[], or MatrixBlock");
+	}
+	
+	@Override
+	public ValueWrapper get(Object key) {
+		// return super.get(key);
+		throw new DMLRuntimeException("Incorrect usage: Use getAsDoubleArray, getAsFloatArray or getAsMatrixBlock instead.");
+	}
+	
+	@Override
+	public void clear() {
+		super.clear();
+		_currentNumBytes.set(0);
+		File tmp;
+		try {
+			tmp = Files.createTempDirectory("systemml_" + Math.abs(_rand.nextLong())).toFile();
+			tmp.deleteOnExit();
+			_prefixFilePath = tmp.getAbsolutePath();
+		} catch (IOException e) {
+			throw new RuntimeException("Error occured while creating the temp directory.", e);
+		}
 	}
 	
 	Map.Entry<String, ValueWrapper> _eldest;
@@ -97,6 +155,7 @@ public class PersistentLRUCache extends LinkedHashMap<String, ValueWrapper> {
 		return false; // Never ask LinkedHashMap to remove eldest entry, instead do that in ensureCapacity.
     }
 	
+	float [] tmp = new float[0];
 	void ensureCapacity(long newNumBytes) throws FileNotFoundException, IOException {
 		if(newNumBytes > _maxNumBytes) {
 			throw new DMLRuntimeException("Exceeds maximum capacity. Cannot put a value of size " + newNumBytes + 
@@ -105,19 +164,18 @@ public class PersistentLRUCache extends LinkedHashMap<String, ValueWrapper> {
 		long newCapacity = _currentNumBytes.addAndGet(newNumBytes);
 		if(newCapacity > _maxNumBytes) {
 			synchronized(this) {
-				Random rand = new Random();
-				String dummyKey = "RAND_KEY_" + Math.abs(rand.nextLong()) + "_" + Math.abs(rand.nextLong());
-				ValueWrapper dummyValue = new ValueWrapper(new DataWrapper(dummyKey, new float[] {0}, this));
+				String dummyKey = "RAND_KEY_" + Math.abs(_rand.nextLong()) + "_" + Math.abs(_rand.nextLong());
+				ValueWrapper dummyValue = new ValueWrapper(new DataWrapper(dummyKey, tmp, this));
 				int maxIter = size();
 				while(_currentNumBytes.get() > _maxNumBytes && maxIter > 0) {
-					put(dummyKey, dummyValue); // This will invoke removeEldestEntry, which will set _eldest
+					super.put(dummyKey, dummyValue); // This will invoke removeEldestEntry, which will set _eldest
 					remove(dummyKey);
 					if(_eldest != null && _eldest.getKey() != dummyKey) {
 						DataWrapper data = _eldest.getValue().get();
 						if(data != null) {
 							data.write(); // Write the eldest entry to disk if not garbage collected.
 						}
-						get(_eldest.getKey()); // Make eldest younger.
+						super.get(_eldest.getKey()); // Make eldest younger.
 					}
 					maxIter--;
 				}
@@ -134,7 +192,7 @@ public class PersistentLRUCache extends LinkedHashMap<String, ValueWrapper> {
 	}
 	
 	public double [] getAsDoubleArray(String key) throws FileNotFoundException, IOException {
-		ValueWrapper value = get(key);
+		ValueWrapper value = super.get(key);
 		if(!value.isAvailable()) {
 			// Fine-grained synchronization: only one read per key, but will allow parallel loading
 			// of distinct keys.
@@ -151,7 +209,7 @@ public class PersistentLRUCache extends LinkedHashMap<String, ValueWrapper> {
 	}
 	
 	public float [] getAsFloatArray(String key) throws FileNotFoundException, IOException {
-		ValueWrapper value = get(key);
+		ValueWrapper value = super.get(key);
 		if(!value.isAvailable()) {
 			// Fine-grained synchronization: only one read per key, but will allow parallel loading
 			// of distinct keys.
@@ -168,7 +226,7 @@ public class PersistentLRUCache extends LinkedHashMap<String, ValueWrapper> {
 	}
 	
 	public MatrixBlock getAsMatrixBlock(String key) throws FileNotFoundException, IOException {
-		ValueWrapper value = get(key);
+		ValueWrapper value = super.get(key);
 		if(!value.isAvailable()) {
 			// Fine-grained synchronization: only one read per key, but will allow parallel loading
 			// of distinct keys.
@@ -308,6 +366,13 @@ class DataWrapper {
 		return new DataWrapper(key, ret, cache);
 	}
 	
+	void remove() {
+		File file = new File(_cache.getFilePath(_key));
+		if(file.exists()) {
+			file.delete();
+		}
+	}
+	
 }
 
 // Internal helper class
@@ -327,6 +392,26 @@ class ValueWrapper {
 	}
 	DataWrapper get() {
 		return _ref.get();
+	}
+	long getSize() {
+		DataWrapper data = _ref.get();
+		if(data != null) {
+			if(data._dArr != null)
+				return data._dArr.length*Double.BYTES;
+			else if(data._fArr != null)
+				return data._fArr.length*Float.BYTES;
+			else if(data._fArr != null)
+				return data._mb.getInMemorySize();
+			else
+				throw new DMLRuntimeException("Not implemented");
+		}
+		return 0;
+	}
+	void remove() {
+		DataWrapper data = _ref.get();
+		if(data != null) {
+			data.remove();
+		}
 	}
 }
 
