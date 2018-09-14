@@ -164,6 +164,8 @@ public class PersistentLRUCache extends LinkedHashMap<String, ValueWrapper> {
 		long newCapacity = _currentNumBytes.addAndGet(newNumBytes);
 		if(newCapacity > _maxNumBytes) {
 			synchronized(this) {
+				if(LOG.isDebugEnabled())
+					LOG.debug("The required capacity (" + newCapacity + ") is greater than max capacity:" + _maxNumBytes);
 				String dummyKey = "RAND_KEY_" + Math.abs(_rand.nextLong()) + "_" + Math.abs(_rand.nextLong());
 				ValueWrapper dummyValue = new ValueWrapper(new DataWrapper(dummyKey, tmp, this));
 				int maxIter = size();
