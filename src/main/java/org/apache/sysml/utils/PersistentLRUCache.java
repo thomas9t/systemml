@@ -34,6 +34,7 @@ import java.util.concurrent.atomic.AtomicLong;
 
 import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
+import org.apache.log4j.Level;
 import org.apache.sysml.runtime.DMLRuntimeException;
 import org.apache.sysml.runtime.controlprogram.caching.MatrixObject;
 import org.apache.sysml.runtime.matrix.data.MatrixBlock;
@@ -67,6 +68,16 @@ public class PersistentLRUCache extends LinkedHashMap<String, ValueWrapper> {
 	private final long _maxNumBytes;
 	Random _rand = new Random();
 	
+	public static void main(String [] args) throws IOException {
+		org.apache.log4j.Logger.getRootLogger().setLevel(Level.DEBUG);
+		double numBytesInMB = 1e+7;
+		int numDoubleInMB = (int) (numBytesInMB / 8);
+		PersistentLRUCache cache = new PersistentLRUCache((long)(numBytesInMB*25));
+		for(int i = 0; i < 30; i++) {
+			cache.put(">>" + i, new double[numDoubleInMB]);
+		}
+		cache.clear();
+	}
 	
 	/**
 	 * Creates a persisting cache
