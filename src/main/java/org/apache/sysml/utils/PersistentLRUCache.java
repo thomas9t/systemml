@@ -300,8 +300,7 @@ class DataWrapper {
 	public synchronized void write() throws FileNotFoundException, IOException {
 		if(_key.equals(_cache.dummyKey))
 			return;
-		if(PersistentLRUCache.LOG.isDebugEnabled())
-			PersistentLRUCache.LOG.debug("Writing value for the key " + _key + " to disk.");
+		_cache.get(_key); // Make it recent.
 		if(_dArr != null || _fArr != null || _mb != null || _mo != null) {
 			_cache._currentNumBytes.addAndGet(-getSize());
 		}
@@ -312,6 +311,8 @@ class DataWrapper {
 					os.writeDouble(_dArr[i]);
 				}
 			}
+			if(PersistentLRUCache.LOG.isDebugEnabled())
+				PersistentLRUCache.LOG.debug("Writing value (double[] of size " + getSize() + " bytes) for the key " + _key + " to disk.");
 			_dArr = null;
 		}
 		else if(_fArr != null) {
@@ -321,6 +322,8 @@ class DataWrapper {
 					os.writeFloat(_fArr[i]);
 				}
 			}
+			if(PersistentLRUCache.LOG.isDebugEnabled())
+				PersistentLRUCache.LOG.debug("Writing value (float[] of size " + getSize() + " bytes) for the key " + _key + " to disk.");
 			_fArr = null;
 		}
 		else if(_mb != null) {
@@ -328,10 +331,16 @@ class DataWrapper {
 				os.writeLong(_mb.getInMemorySize());
 				_mb.write(os);
 			}
+			if(PersistentLRUCache.LOG.isDebugEnabled())
+				PersistentLRUCache.LOG.debug("Writing value (MatrixBlock of size " + getSize() + " bytes) for the key " + _key + " to disk.");
 			_mb = null;
 		}
 		else if(_mo != null) {
 			throw new DMLRuntimeException("Not implemented");
+		}
+		else {
+			if(PersistentLRUCache.LOG.isDebugEnabled())
+				PersistentLRUCache.LOG.debug("Skipping writing of the key " + _key + " to disk as the value is already written.");
 		}
 	}
 	
