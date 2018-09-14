@@ -63,7 +63,7 @@ public class PersistentLRUCache extends LinkedHashMap<String, ValueWrapper> {
 	static final Log LOG = LogFactory.getLog(PersistentLRUCache.class.getName());
 	private static final long serialVersionUID = -6838798881747433047L;
 	private String _prefixFilePath;
-	private final AtomicLong _currentNumBytes = new AtomicLong();
+	final AtomicLong _currentNumBytes = new AtomicLong();
 	private final long _maxNumBytes;
 	Random _rand = new Random();
 	
@@ -156,6 +156,7 @@ public class PersistentLRUCache extends LinkedHashMap<String, ValueWrapper> {
     }
 	
 	float [] tmp = new float[0];
+	String dummyKey = "RAND_KEY_" + Math.abs(_rand.nextLong()) + "_" + Math.abs(_rand.nextLong());
 	void ensureCapacity(long newNumBytes) throws FileNotFoundException, IOException {
 		if(newNumBytes > _maxNumBytes) {
 			throw new DMLRuntimeException("Exceeds maximum capacity. Cannot put a value of size " + newNumBytes + 
@@ -166,7 +167,6 @@ public class PersistentLRUCache extends LinkedHashMap<String, ValueWrapper> {
 			synchronized(this) {
 				if(LOG.isDebugEnabled())
 					LOG.debug("The required capacity (" + newCapacity + ") is greater than max capacity:" + _maxNumBytes);
-				String dummyKey = "RAND_KEY_" + Math.abs(_rand.nextLong()) + "_" + Math.abs(_rand.nextLong());
 				ValueWrapper dummyValue = new ValueWrapper(new DataWrapper(dummyKey, tmp, this));
 				int maxIter = size();
 				while(_currentNumBytes.get() > _maxNumBytes && maxIter > 0) {
@@ -248,10 +248,10 @@ public class PersistentLRUCache extends LinkedHashMap<String, ValueWrapper> {
 // ----------------------------------------------------------------------------------------
 // Internal helper class
 class DataWrapper {
-	final double [] _dArr;
-	final float [] _fArr;
-	final MatrixBlock _mb;
-	final MatrixObject _mo;
+	double [] _dArr;
+	float [] _fArr;
+	MatrixBlock _mb;
+	MatrixObject _mo;
 	final PersistentLRUCache _cache;
 	final String _key;
 	DataWrapper(String key, double [] value, PersistentLRUCache cache) {
@@ -292,9 +292,14 @@ class DataWrapper {
 		write();
 	}
 	
-	public void write() throws FileNotFoundException, IOException {
+	public synchronized void write() throws FileNotFoundException, IOException {
+		if(_key.equals(_cache.dummyKey))
+			return;
 		if(PersistentLRUCache.LOG.isDebugEnabled())
 			PersistentLRUCache.LOG.debug("Writing value for the key " + _key + " to disk.");
+		if(_dArr != null || _fArr != null || _mb != null) {
+			_cache._currentNumBytes.addAndGet(-getSize());
+		}
 		if(_dArr != null) {
 			try (ObjectOutputStream os = new ObjectOutputStream(new FileOutputStream(_cache.getFilePath(_key)))) {
 				os.writeInt(_dArr.length);
@@ -302,6 +307,7 @@ class DataWrapper {
 					os.writeDouble(_dArr[i]);
 				}
 			}
+			_dArr = null;
 		}
 		else if(_fArr != null) {
 			try (ObjectOutputStream os = new ObjectOutputStream(new FileOutputStream(_cache.getFilePath(_key)))) {
@@ -310,12 +316,14 @@ class DataWrapper {
 					os.writeFloat(_fArr[i]);
 				}
 			}
+			_fArr = null;
 		}
 		else if(_mb != null) {
 			try(FastBufferedDataOutputStream os = new FastBufferedDataOutputStream(new ObjectOutputStream(new FileOutputStream(_cache.getFilePath(_key))))) {
 				os.writeLong(_mb.getInMemorySize());
 				_mb.write(os);
 			}
+			_mb = null;
 		}
 		else if(_mo != null) {
 			throw new DMLRuntimeException("Not implemented");
@@ -375,6 +383,17 @@ class DataWrapper {
 		}
 	}
 	
+	long getSize() {
+		if(_dArr != null)
+			return _dArr.length*Double.BYTES;
+		else if(_fArr != null)
+			return _fArr.length*Float.BYTES;
+		else if(_fArr != null)
+			return _mb.getInMemorySize();
+		else
+			throw new DMLRuntimeException("Not implemented");
+	}
+	
 }
 
 // Internal helper class
@@ -397,17 +416,10 @@ class ValueWrapper {
 	}
 	long getSize() {
 		DataWrapper data = _ref.get();
-		if(data != null) {
-			if(data._dArr != null)
-				return data._dArr.length*Double.BYTES;
-			else if(data._fArr != null)
-				return data._fArr.length*Float.BYTES;
-			else if(data._fArr != null)
-				return data._mb.getInMemorySize();
-			else
-				throw new DMLRuntimeException("Not implemented");
-		}
-		return 0;
+		if(data != null) 
+			return data.getSize();
+		else
+			return 0;
 	}
 	void remove() {
 		DataWrapper data = _ref.get();
