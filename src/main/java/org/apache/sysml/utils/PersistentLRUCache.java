@@ -35,9 +35,11 @@ import java.util.concurrent.atomic.AtomicLong;
 import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
 import org.apache.log4j.Level;
+import org.apache.sysml.conf.ConfigurationManager;
 import org.apache.sysml.runtime.DMLRuntimeException;
 import org.apache.sysml.runtime.controlprogram.caching.MatrixObject;
 import org.apache.sysml.runtime.matrix.data.MatrixBlock;
+import org.apache.sysml.runtime.util.DataConverter;
 import org.apache.sysml.runtime.util.FastBufferedDataInputStream;
 import org.apache.sysml.runtime.util.FastBufferedDataOutputStream;
 
@@ -67,6 +69,7 @@ import org.apache.sysml.runtime.util.FastBufferedDataOutputStream;
  * - Read-only mode (only applicable for MatrixBlock keys): 
  *   = We delete the value when capacity is exceeded or when GC occurs. 
  *   = When get is invoked on the deleted key, the key is treated as the full path and MatrixBlock is read from that path.
+ *   = Note: in the current version, the metadata file is ignored and the file-format is assumed to be binary-block. We can extend this later.
  * - General case: 
  *   = We persist the values to the file system (into temporary directory) when capacity is exceeded or when GC occurs. 
  *   = When get is invoked on the deleted key, the key is treated as the file name (not the absolute path) and MatrixBlock is read from that path.
@@ -274,7 +277,7 @@ public class PersistentLRUCache extends LinkedHashMap<String, ValueWrapper> {
 			// of distinct keys.
 			synchronized(value._lock) {
 				if(!value.isAvailable()) {
-					value.update(DataWrapper.loadMatrixBlock(key, this));
+					value.update(DataWrapper.loadMatrixBlock(key, this, value._rlen, value._clen, value._nnz));
 				}
 			}
 		}
@@ -423,12 +426,18 @@ class DataWrapper {
 		return new DataWrapper(key, ret, cache);
 	}
 	
-	static DataWrapper loadMatrixBlock(String key, PersistentLRUCache cache) throws FileNotFoundException, IOException {
+	static DataWrapper loadMatrixBlock(String key, 
+			PersistentLRUCache cache, long rlen, long clen, long nnz) throws FileNotFoundException, IOException {
 		if(PersistentLRUCache.LOG.isDebugEnabled())
 			PersistentLRUCache.LOG.debug("Loading matrix block array the key " + key + " from the disk.");
 		MatrixBlock ret = null;
 		if(cache.isInReadOnlyMode) {
-			// TODO: Anthony
+			// Read from the filesystem in the read-only mode assuming binary-blocked format.
+			// TODO: Read the meta-data file and remove the format requirement. 
+			ret = DataConverter.readMatrixFromHDFS(key, 
+					org.apache.sysml.runtime.matrix.data.InputInfo.BinaryBlockInputInfo, rlen, clen,
+					ConfigurationManager.getBlocksize(), ConfigurationManager.getBlocksize(), nnz, 
+					new org.apache.sysml.runtime.io.FileFormatProperties());
 		}
 		else {
 			try (FastBufferedDataInputStream is = new FastBufferedDataInputStream(new ObjectInputStream(new FileInputStream(cache.getFilePath(key))))) {
@@ -465,13 +474,26 @@ class DataWrapper {
 class ValueWrapper {
 	final Object _lock;
 	private SoftReference<DataWrapper> _ref;
+	long _rlen;
+	long _clen;
+	long _nnz;
 	
 	ValueWrapper(DataWrapper _data) {
 		_lock = new Object();
 		_ref = new SoftReference<>(_data);
+		if(_data._mb != null) {
+			_rlen = _data._mb.getNumRows();
+			_clen = _data._mb.getNumColumns();
+			_nnz = _data._mb.getNonZeros();
+		}
 	}
 	void update(DataWrapper _data) {
 		_ref = new SoftReference<>(_data);
+		if(_data._mb != null) {
+			_rlen = _data._mb.getNumRows();
+			_clen = _data._mb.getNumColumns();
+			_nnz = _data._mb.getNonZeros();
+		}
 	}
 	boolean isAvailable() {
 		return _ref.get() != null;
