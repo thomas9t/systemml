@@ -184,7 +184,7 @@ public class PersistentLRUCache extends LinkedHashMap<String, ValueWrapper> {
 					if(_eldest != null && _eldest.getKey() != dummyKey) {
 						DataWrapper data = _eldest.getValue().get();
 						if(data != null) {
-							data.write(); // Write the eldest entry to disk if not garbage collected.
+							data.write(false); // Write the eldest entry to disk if not garbage collected.
 						}
 						makeRecent(_eldest.getKey()); // Make recent.
 					}
@@ -298,13 +298,20 @@ class DataWrapper {
 	@Override
 	protected void finalize() throws Throwable {
 		super.finalize();
-		write();
+		write(true);
 	}
 	
-	public synchronized void write() throws FileNotFoundException, IOException {
+	public synchronized void write(boolean isBeingGarbageCollected) throws FileNotFoundException, IOException {
 		if(_key.equals(_cache.dummyKey))
 			return;
 		_cache.makeRecent(_key); // Make it recent.
+		String debugSuffix = null;
+		if(PersistentLRUCache.LOG.isDebugEnabled()) {
+			if(isBeingGarbageCollected)
+				debugSuffix = " (is being garbage collected).";
+			else
+				debugSuffix = " (capacity exceeded).";
+		}
 		if(_dArr != null || _fArr != null || _mb != null || _mo != null) {
 			_cache._currentNumBytes.addAndGet(-getSize());
 		}
@@ -316,7 +323,7 @@ class DataWrapper {
 				}
 			}
 			if(PersistentLRUCache.LOG.isDebugEnabled())
-				PersistentLRUCache.LOG.debug("Writing value (double[] of size " + getSize() + " bytes) for the key " + _key + " to disk.");
+				PersistentLRUCache.LOG.debug("Writing value (double[] of size " + getSize() + " bytes) for the key " + _key + " to disk" + debugSuffix);
 			_dArr = null;
 		}
 		else if(_fArr != null) {
@@ -327,7 +334,7 @@ class DataWrapper {
 				}
 			}
 			if(PersistentLRUCache.LOG.isDebugEnabled())
-				PersistentLRUCache.LOG.debug("Writing value (float[] of size " + getSize() + " bytes) for the key " + _key + " to disk.");
+				PersistentLRUCache.LOG.debug("Writing value (float[] of size " + getSize() + " bytes) for the key " + _key + " to disk" + debugSuffix);
 			_fArr = null;
 		}
 		else if(_mb != null) {
@@ -336,7 +343,7 @@ class DataWrapper {
 				_mb.write(os);
 			}
 			if(PersistentLRUCache.LOG.isDebugEnabled())
-				PersistentLRUCache.LOG.debug("Writing value (MatrixBlock of size " + getSize() + " bytes) for the key " + _key + " to disk.");
+				PersistentLRUCache.LOG.debug("Writing value (MatrixBlock of size " + getSize() + " bytes) for the key " + _key + " to disk" + debugSuffix);
 			_mb = null;
 		}
 		else if(_mo != null) {
@@ -344,7 +351,7 @@ class DataWrapper {
 		}
 		else {
 			if(PersistentLRUCache.LOG.isDebugEnabled())
-				PersistentLRUCache.LOG.debug("Skipping writing of the key " + _key + " to disk as the value is already written.");
+				PersistentLRUCache.LOG.debug("Skipping writing of the key " + _key + " to disk as the value is already written" + debugSuffix);
 		}
 	}
 	
