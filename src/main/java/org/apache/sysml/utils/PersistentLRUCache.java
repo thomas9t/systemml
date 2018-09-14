@@ -308,7 +308,7 @@ class DataWrapper {
 			return;
 		if(PersistentLRUCache.LOG.isDebugEnabled())
 			PersistentLRUCache.LOG.debug("Writing value for the key " + _key + " to disk.");
-		if(_dArr != null || _fArr != null || _mb != null) {
+		if(_dArr != null || _fArr != null || _mb != null || _mo != null) {
 			_cache._currentNumBytes.addAndGet(-getSize());
 		}
 		if(_dArr != null) {
@@ -338,9 +338,6 @@ class DataWrapper {
 		}
 		else if(_mo != null) {
 			throw new DMLRuntimeException("Not implemented");
-		}
-		else {
-			throw new DMLRuntimeException("Unsupported value type in SimplePersistingCache.");
 		}
 	}
 	
