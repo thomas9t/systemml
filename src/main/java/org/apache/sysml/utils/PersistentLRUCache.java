@@ -74,6 +74,7 @@ public class PersistentLRUCache extends LinkedHashMap<String, ValueWrapper> {
 		int numDoubleInMB = (int) (numBytesInMB / 8);
 		PersistentLRUCache cache = new PersistentLRUCache((long)(numBytesInMB*25));
 		for(int i = 0; i < 30; ++i) {
+			LOG.debug("Putting a double array of size 1MB.");
 			cache.put(">>" + i + "<<", new double[numDoubleInMB]);
 		}
 		cache.clear();
