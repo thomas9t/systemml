@@ -149,6 +149,8 @@ public class PreparedScript implements ConfigurableAPI
 		this._inVarReuse.clear();
 	}
 
+	public boolean hasPinnedVars() { return this._inVarReuse.size() > 0; }
+
 	@Override
 	public void resetConfig() {
 		_dmlconf.set(new DMLConfig());

@@ -94,9 +94,10 @@ object ReferenceCountedModelManager extends ModelManager {
          println("ACQUIRING MODEL: " + name + " => " + modelRefCounts(name).longValue())
         // if the model has non-zero refcount then all weights are
         // guaranteed to be already pinned, so we can return immediately
-        if (modelRefCounts(name).longValue() > 0) {
+        val ps = models(name).script(execType)
+        if (modelRefCounts(name).longValue() > 0 && ps.hasPinnedVars) {
             modelRefCounts(name).increment()
-            return getPreparedScript(name, execType)
+            return ps.clone(false)
         }
 
         // otherwise we need to re-pin the weights, possibly reading them from disk
@@ -104,11 +105,11 @@ object ReferenceCountedModelManager extends ModelManager {
         val model = models(name)
         model.synchronized {
             if (modelRefCounts(name).longValue() == 0)
-                model.weightFiles.foreach(x => model.script(execType).setMatrix(x._1, weightCache.getAsMatrixBlock(x._2), true))
+                model.weightFiles.foreach(x => ps.setMatrix(x._1, weightCache.getAsMatrixBlock(x._2), true))
             modelRefCounts(name).increment()
         }
         println("DONE ACQUIRING MODEL: " + name)
-        getPreparedScript(name, execType)
+        ps.clone(false)
     }
 
     override def disableCleanup(): Unit = {
@@ -144,9 +145,4 @@ object ReferenceCountedModelManager extends ModelManager {
 
     def get(name: String) : Model = { models(name) }
 
-    def getPreparedScript(name: String, execType: String) : PreparedScript = {
-        if (modelRefCounts(name).longValue() == 0)
-            throw new RuntimeException("Something is wrong. Cannot get prepared script before acquiring model")
-        models(name).script(execType).clone(false)
-    }
 }
