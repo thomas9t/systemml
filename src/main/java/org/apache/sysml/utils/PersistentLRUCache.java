@@ -287,7 +287,7 @@ public class PersistentLRUCache extends LinkedHashMap<String, ValueWrapper> {
                 if(!value.isAvailable() || (value.isAvailable() && (value.get()._mb == null))) {
                     System.out.println("BEGIN READ: " + key);
                     value.update(DataWrapper.loadMatrixBlock(key, this, value._rlen, value._clen, value._nnz));
-                    System.out.println("DONE READ");
+                    System.out.println("DONE READ: " + key);
                 }
             }
         }
@@ -437,19 +437,21 @@ class DataWrapper {
     }
 
     static DataWrapper loadMatrixBlock(String key,
-                                       PersistentLRUCache cache, long rlen, long clen, long nnz) throws FileNotFoundException, IOException {
+                                       PersistentLRUCache cache,
+                                       long rlen, long clen,
+                                       long nnz) throws FileNotFoundException, IOException {
         if(PersistentLRUCache.LOG.isDebugEnabled())
             PersistentLRUCache.LOG.debug("Loading matrix block array the key " + key + " from the disk.");
         MatrixBlock ret = null;
         if(cache.isInReadOnlyMode) {
             // Read from the filesystem in the read-only mode assuming binary-blocked format.
             // TODO: Read the meta-data file and remove the format requirement.
-            System.out.println("BEGIN READ ACTUAL");
+            System.out.println("BEGIN READ ACTUAL => " + key);
             ret = DataConverter.readMatrixFromHDFS(key,
                     org.apache.sysml.runtime.matrix.data.InputInfo.BinaryBlockInputInfo, rlen, clen,
                     ConfigurationManager.getBlocksize(), ConfigurationManager.getBlocksize(), nnz,
                     new org.apache.sysml.runtime.io.FileFormatProperties());
-            System.out.println("DONE READ ACTUAL");
+            System.out.println("DONE READ ACTUAL => " + key);
         }
         else {
             try (FastBufferedDataInputStream is = new FastBufferedDataInputStream(new ObjectInputStream(new FileInputStream(cache.getFilePath(key))))) {
@@ -485,14 +487,14 @@ class DataWrapper {
 // Internal helper class
 class ValueWrapper {
     final Object _lock;
-    private WeakReference<DataWrapper> _ref;
+    private SoftReference<DataWrapper> _ref;
     long _rlen;
     long _clen;
     long _nnz;
 
     ValueWrapper(DataWrapper _data) {
         _lock = new Object();
-        _ref = new WeakReference<>(_data);
+        _ref = new SoftReference<>(_data);
         if(_data._mb != null) {
             _rlen = _data._mb.getNumRows();
             _clen = _data._mb.getNumColumns();
@@ -500,7 +502,7 @@ class ValueWrapper {
         }
     }
     void update(DataWrapper _data) {
-        _ref = new WeakReference<>(_data);
+        _ref = new SoftReference<>(_data);
         if(_data._mb != null) {
             _rlen = _data._mb.getNumRows();
             _clen = _data._mb.getNumColumns();

@@ -193,10 +193,8 @@ public class DataConverter
 		//core matrix reading 
 		MatrixBlock ret = null;
 		try {
-			System.out.println("BEGIN READ SUPER ACTUAL");
 			MatrixReader reader = MatrixReaderFactory.createMatrixReader(prop);
 			ret = reader.readMatrixFromHDFS(prop.path, prop.rlen, prop.clen, prop.brlen, prop.bclen, prop.expectedNnz);
-			System.out.println("DONE READ SUPER ACTUAL");
 		}
 		catch(DMLRuntimeException rex)
 		{

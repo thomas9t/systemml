@@ -92,7 +92,6 @@ object LocalityAwareScheduler extends BatchingScheduler {
         if (localQueue.size() > 0 || globalDiskQueue.size() > 0) {
             dummyResponse.synchronized {
                 if (localQueue.size() > 0 || globalDiskQueue.size() > 0) {
-                    println("SCHEDULING ")
                     val localExecTime = localQueue.getExpectedExecutionTime
                     val globalExecTime = globalDiskQueue.getExpectedExecutionTime
                     val isLocalMode = (
@@ -107,8 +106,8 @@ object LocalityAwareScheduler extends BatchingScheduler {
                     val mqueue = modelQueues.get(batch.modelName)
                     val numToDequeue = min(batch.size, mqueue.size())
                     if (numToDequeue > 0) {
-                        val memNeeded = modelManager.estMemoryRequired(model.name, batch.size)
-                        if (modelManager.acquireMemory(memNeeded) < 0) {
+                        val memReceived = modelManager.tryAllocMem(model.name, batch.size)
+                        if (memReceived < 0) {
                             return ret
                         }
 
@@ -121,7 +120,7 @@ object LocalityAwareScheduler extends BatchingScheduler {
                             val nextRequest = mqueue.poll()
                             assert(nextRequest != null, "Something is wrong - request should not be null!")
 
-                            nextRequest.memUse = memNeeded
+                            nextRequest.memUse = memReceived
                             nextRequest.statistics.execLocal = if (isLocalMode) 1 else 0
                             ret :+= nextRequest
                         }

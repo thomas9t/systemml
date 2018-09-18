@@ -188,7 +188,7 @@ object PredictionService extends PredictionJsonProtocol with AddModelJsonProtoco
     def main(args: Array[String]): Unit = {
         // Parse commandline variables:
         val options = getCommandLineOptions
-        val line = new PosixParser().parse(getCommandLineOptions, args);
+        val line = new PosixParser().parse(getCommandLineOptions, args)
         if (line.hasOption("help")) {
             new org.apache.commons.cli.HelpFormatter().printHelp("systemml-prediction-service", options)
             return
@@ -216,10 +216,10 @@ object PredictionService extends PredictionJsonProtocol with AddModelJsonProtoco
         //scheduler = new BasicBatchingScheduler(timeout)
 //        scheduler = new NonBatchingScheduler(timeout)
         val gpus = null
-//        val numCores = Runtime.getRuntime.availableProcessors() - 1
-        val numCores = 1
-        val maxMemory = Runtime.getRuntime.totalMemory()
-//        val maxMemory = 160000000
+        val numCores = Runtime.getRuntime.availableProcessors() - 1
+//        val numCores = 2
+        val maxMemory = Runtime.getRuntime.maxMemory()  // total memory is just what the JVM has currently allocated
+        println("TOTAL MEMORY: " + maxMemory)
         if (gpus != null)
             conn.enableGpu(gpus, true)
         scheduler.start(numCores, maxMemory, gpus)
@@ -283,55 +283,57 @@ object PredictionService extends PredictionJsonProtocol with AddModelJsonProtoco
                         }
                     } ~
                       path("register-model") {
-                          post {
-                              entity(as[AddModelRequest]) { request =>
-                                  validate(!models.contains(request.name), "The model is already loaded") {
-                                      try {
-                                          val weightsInfo = processWeights(request.weightsDir)
-                                          val inputs = weightsInfo._1.keys.toArray ++ Array[String](request.inputVarName)
+                          withoutRequestTimeout {
+                              post {
+                                  entity(as[AddModelRequest]) { request =>
+                                      validate(!models.contains(request.name), "The model is already loaded") {
+                                          try {
+                                              val weightsInfo = processWeights(request.weightsDir)
+                                              val inputs = weightsInfo._1.keys.toArray ++ Array[String](request.inputVarName)
 
-                                          // compile the model's DML script for execution on CPU - unfortunately this needs
-                                          // to be synchronized
-                                          conn.synchronized {
-                                              conn.setGpu(false)
-                                              conn.setForceGPU(false)
-                                              val scriptCpu = conn.prepareScript(
-                                                  request.dml, inputs, Array(request.outputVarName))
+                                              // compile the model's DML script for execution on CPU - unfortunately this needs
+                                              // to be synchronized
+                                              conn.synchronized {
+                                                  conn.setGpu(false)
+                                                  conn.setForceGPU(false)
+                                                  val scriptCpu = conn.prepareScript(
+                                                      request.dml, inputs, Array(request.outputVarName))
 
-                                              conn.setGpu(true)
-                                              conn.setForceGPU(true)
-                                              val scriptGpu = conn.prepareScript(
-                                                  request.dml, inputs, Array(request.outputVarName))
+                                                  conn.setGpu(true)
+                                                  conn.setForceGPU(true)
+                                                  val scriptGpu = conn.prepareScript(
+                                                      request.dml, inputs, Array(request.outputVarName))
 
-                                              // b = cov(x,y) / var(x)
-                                              // a = mean(y) - b*mean(x)
-                                              val n = max(request.batchSize.length, 1).toDouble
-                                              val x = request.batchSize
-                                              val y = request.memUse
-                                              val mux = x.sum / n
-                                              val muy = y.sum / n
-                                              val vx = (1/n)*x.map(v => pow(v - mux, 2.0)).sum
-                                              val b = ((1/n)*(x.map(v => v - mux) zip y.map(v => v - muy)
-                                                ).map(v => v._1*v._2).sum)*(1/vx)
-                                              val a = muy - b*mux
+                                                  // b = cov(x,y) / var(x)
+                                                  // a = mean(y) - b*mean(x)
+                                                  val n = max(request.batchSize.length, 1).toDouble
+                                                  val x = request.batchSize
+                                                  val y = request.memUse
+                                                  val mux = x.sum / n
+                                                  val muy = y.sum / n
+                                                  val vx = (1 / n) * x.map(v => pow(v - mux, 2.0)).sum
+                                                  val b = ((1 / n) * (x.map(v => v - mux) zip y.map(v => v - muy)
+                                                    ).map(v => v._1 * v._2).sum) * (1 / vx)
+                                                  val a = muy - b * mux
 
-                                              // now register the created model
-                                              val model = Model(request.name,
-                                                                Map("CPU" -> scriptCpu, "GPU" -> scriptGpu),
-                                                                request.inputVarName,
-                                                                request.outputVarName,
-                                                                Duration(request.latencyObjective),
-                                                                weightsInfo._1, (a,b), weightsInfo._2)
-                                              models += (request.name -> model)
-                                              scheduler.addModel(model)
-                                          }
-                                          complete(StatusCodes.OK)
-                                      } catch {
-                                          case e: Exception => {
-                                              numFailures.increment()
-                                              e.printStackTrace()
-                                              complete(StatusCodes.InternalServerError,
-                                                  "Exception occured while trying to add model:" + e.getMessage)
+                                                  // now register the created model
+                                                  val model = Model(request.name,
+                                                      Map("CPU" -> scriptCpu, "GPU" -> scriptGpu),
+                                                      request.inputVarName,
+                                                      request.outputVarName,
+                                                      Duration(request.latencyObjective),
+                                                      weightsInfo._1, (a, b), weightsInfo._2)
+                                                  models += (request.name -> model)
+                                                  scheduler.addModel(model)
+                                              }
+                                              complete(StatusCodes.OK)
+                                          } catch {
+                                              case e: Exception => {
+                                                  numFailures.increment()
+                                                  e.printStackTrace()
+                                                  complete(StatusCodes.InternalServerError,
+                                                      "Exception occured while trying to add model:" + e.getMessage)
+                                              }
                                           }
                                       }
                                   }
@@ -379,9 +381,10 @@ object PredictionService extends PredictionJsonProtocol with AddModelJsonProtoco
         if (!(dir.exists && dir.isDirectory))
             throw new Exception("Weight directory: " + dirname + " is invalid")
 
-        val weightsWithSize = new File(dirname).listFiles().filter(_.isFile).
-            map(_.toString).filter(x => (x.slice(x.length-3, x.length) != "mtd") && !(x contains "_bin.mtx")).
-          map(x => getNameFromPath(x) -> registerWeight(x)).toMap
+        val weightsWithSize = dir.listFiles().filter(_.isFile).
+            map(_.toString).filter(x => (x.slice(x.length-3, x.length) != "mtd") &&
+            !(x contains "_bin.mtx")).
+          map(x => getNameFromPath(x) -> registerWeight(x, dirname)).toMap
 
         val weightMap = weightsWithSize.map(x => x._1 -> x._2._1)
         val totalSize = weightsWithSize.map(x => x._2._2).sum
@@ -393,26 +396,27 @@ object PredictionService extends PredictionJsonProtocol with AddModelJsonProtoco
         path.split("/").last.split("\\.")(0)
     }
 
-    def registerWeight(path: String) : (String, Long) = {
-        val res = convertToBinaryIfNecessary(path)
+    def registerWeight(path: String, dir: String) : (String, Long) = {
+        val res = convertToBinaryIfNecessary(path, dir)
         scheduler.modelManager.putWeight(res._2, res._1)
         (res._2, res._1.getInMemorySize)
     }
 
-    def convertToBinaryIfNecessary(path: String) : (MatrixBlock, String) = {
+    def convertToBinaryIfNecessary(path: String, dir: String) : (MatrixBlock, String) = {
         var pathActual = path
         val data = conn.readMatrix(path)
+
         if (!isBinaryFormat(path)) {
             println("CONVERTING TO BINARY")
             data.getMatrixCharacteristics
-            val binPath = path + "_bin.mtx"
+            val binPath = dir + "/binary/" + getNameFromPath(path) + ".mtx"
             DataConverter.writeMatrixToHDFS(data, binPath,
                 OutputInfo.BinaryBlockOutputInfo,
                 new MatrixCharacteristics(data.getNumRows, data.getNumColumns, ConfigurationManager.getBlocksize,
                     ConfigurationManager.getBlocksize, data.getNonZeros))
             pathActual = binPath
         }
-        println("DATA SIZE: " + data.getInMemorySize)
+        println("DATA SIZE: " + pathActual + " => " + data.getInMemorySize)
         (data, pathActual)
     }
 

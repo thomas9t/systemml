@@ -1,7 +1,6 @@
 package org.apache.sysml.api.ml.serving
 
 import java.util.concurrent.atomic.LongAdder
-
 import org.apache.sysml.api.jmlc.PreparedScript
 import org.apache.sysml.runtime.matrix.data.MatrixBlock
 import org.apache.sysml.utils.PersistentLRUCache
@@ -48,13 +47,9 @@ trait ModelManager {
 
     def releaseMemory(bytes: Long) : Unit = {
         if (bytes > 0) {
-            synchronized {
-                val toRelease = if ((availableMemory.longValue() + bytes) > totalMemory)
-                    totalMemory - availableMemory.longValue() else bytes
-                println("RELEASING: " + toRelease)
-                availableMemory.add(toRelease)
-                println("MEMORY IS NOW: " + availableMemory.longValue())
-            }
+            println("RELEASING: " + bytes)
+            availableMemory.add(bytes)
+            println("MEMORY IS NOW: " + availableMemory.longValue())
         }
     }
 
@@ -72,12 +67,13 @@ trait ModelManager {
 
     def getPreparedScript(name: String, execType: String) : PreparedScript
 
-    def release(name: String, memory: Long) : Unit
+    def release(name: String) : Unit
 }
 
 object ReferenceCountedModelManager extends ModelManager {
     var modelRefCounts: Map[String,LongAdder] = Map()
     var weightCache : PersistentLRUCache = _
+//    val weightCache = new ConcurrentHashMap[String,MatrixBlock]()
 
     override def setAvailableMemory(maxBytes: Long) : Unit = {
         super.setAvailableMemory(maxBytes)
@@ -85,8 +81,11 @@ object ReferenceCountedModelManager extends ModelManager {
         weightCache.enableReadOnlyMode(true)
     }
 
-    def estMemoryRequired(name: String, batchSize: Int) : Long = {
-        if (isCached(name)) 0L else models(name).weightMem
+    def tryAllocMem(name: String, batchSize: Int) : Long = {
+        val extraMem = (0.5*models(name).weightMem).toLong
+        val weightMem = if (modelRefCounts(name).longValue() > 0) 0L else models(name).weightMem
+        val memReceived = acquireMemory(extraMem + weightMem)
+        if (memReceived < 0) memReceived else extraMem
     }
 
     def isCached(name: String) : Boolean = { modelRefCounts(name).longValue() > 0 }
@@ -101,14 +100,14 @@ object ReferenceCountedModelManager extends ModelManager {
         }
 
         // otherwise we need to re-pin the weights, possibly reading them from disk
-        println("READING FROM CACHE. MEM AVAILABLE => " + weightCache.getNumBytes)
+        println("READING: " + name + " FROM CACHE. MEM AVAILABLE => " + weightCache.getNumBytes)
         val model = models(name)
         model.synchronized {
             if (modelRefCounts(name).longValue() == 0)
                 model.weightFiles.foreach(x => model.script(execType).setMatrix(x._1, weightCache.getAsMatrixBlock(x._2), true))
             modelRefCounts(name).increment()
         }
-        println("DONE ACQUIRING MODEL")
+        println("DONE ACQUIRING MODEL: " + name)
         getPreparedScript(name, execType)
     }
 
@@ -117,16 +116,18 @@ object ReferenceCountedModelManager extends ModelManager {
         println("CLEANUP IS DISABLED")
     }
 
-    def release(name: String, memory: Long) : Unit = {
+    def release(name: String) : Unit = {
         modelRefCounts(name).decrement()
 
-        println("RELEASE MODEL: " + modelRefCounts(name).longValue())
+        println("RELEASE MODEL: " + name + " => " + modelRefCounts(name).longValue())
         if (modelRefCounts(name).longValue() == 0 && cleanupEnabled) {
             models(name).synchronized {
                 if (modelRefCounts(name).longValue() == 0) {
+                    println("ACTUALLY RELEASING THE MODEL")
                     models(name).script.foreach { x => x._2.clearInVarReuse() }
                     models(name).script.foreach { x => x._2.clearParameters() }
-                    releaseMemory(memory)
+                    println("CALLING RELEASE MEMORY")
+                    releaseMemory(models(name).weightMem)
                 }
             }
         }
