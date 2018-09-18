@@ -21,8 +21,10 @@ package org.apache.sysml.api.ml.serving
 import scala.concurrent.Future
 import scala.concurrent.duration._
 import java.util.concurrent._
+import java.util.concurrent.atomic.LongAdder
 
 import org.apache.sysml.runtime.instructions.gpu.context.GPUContextPool
+
 import scala.concurrent.ExecutionContext
 
 case class SchedulingRequest(request: PredictionRequest,
@@ -30,9 +32,8 @@ case class SchedulingRequest(request: PredictionRequest,
                              latch: CountDownLatch,
                              receivedTime: Long,
                              var response: PredictionResponse = null,
-                             statistics: RequestStatistics = null)
-
-object EXECUTOR_METHOD extends Enumeration { val LOCALITY_AWARE, BLOCKING = Value }
+                             statistics: RequestStatistics = null,
+                             var memUse: Long = 0)
 
 trait Scheduler {
     var executorService: ExecutorService = _
@@ -40,11 +41,13 @@ trait Scheduler {
     implicit val ec : ExecutionContext = ExecutionContext.fromExecutor(Executors.newFixedThreadPool(2000))
     var executorTypes = Array[String]()
     var modelManager = ReferenceCountedModelManager
+    val requestsProcessed = new ConcurrentHashMap[String,LongAdder]()
 
     def start(numCores: Int, cpuMemoryBudgetInBytes: Long, gpus: String): Unit = {
         val gCtxs = if (gpus != null) GPUContextPool.reserveAllGPUContexts() else null
         val numGpus = if (gCtxs != null) gCtxs.size() else 0
         executorService = Executors.newFixedThreadPool(numCores + numGpus)
+        modelManager.setAvailableMemory((cpuMemoryBudgetInBytes*0.80).toLong)
 
         if (numCores > 0)
             executorTypes :+= "CPU"
@@ -62,8 +65,6 @@ trait Scheduler {
             executorQueues.put(exec, new BatchQueue("GPU", "GPU" + i))
             executorService.submit(exec)
         }
-
-        executorTypes.foreach{x => globalSchedulingQueues.put(x, new BatchQueue(x, "GLOBAL-" + x))}
     }
 
     def shutdown(): Unit = {
@@ -79,12 +80,6 @@ trait Scheduler {
     def addModel(model: Model): Unit = {
         modelQueues.putIfAbsent(model.name, new LinkedBlockingDeque[SchedulingRequest]())
         latencyObjectives.putIfAbsent(model.name, model.latencyObjective)
-        val localitySet = new ConcurrentHashMap[BatchQueue,Boolean]()
-        val globalQueueTypes = globalSchedulingQueues.keys()
-        while (globalQueueTypes.hasMoreElements)
-            localitySet.put(globalSchedulingQueues.get(globalQueueTypes.nextElement()), true)
-
-        modelLocality.put(model.name, localitySet)
         modelManager.put(model)
     }
 
@@ -115,18 +110,7 @@ trait Scheduler {
     var executorQueues = new ConcurrentHashMap[JmlcExecutor, BatchQueue]()
     val dummyResponse = PredictionResponse(null, -1, null)
     val latencyObjectives = new ConcurrentHashMap[String, Duration]()
-    val modelLocality = new ConcurrentHashMap[String, ConcurrentHashMap[BatchQueue,Boolean]]()
     var counter = 0
-
-    def setModelLocality(model: String, localQueue: BatchQueue): Unit = {
-        modelLocality.get(model).put(localQueue, true)
-    }
-
-    def unsetModelLocality(model: String, localQueue: BatchQueue): Unit = {
-        modelLocality.get(model).remove(localQueue)
-    }
-
-
 
     /**
       * Enqueues a request for processing. The scheduler will read from these queues to determine which

@@ -87,6 +87,20 @@ public class PreparedScript implements ConfigurableAPI
 
 	private GPUContext _gCtx;
 
+	public void printSymbolTable() {
+		for (Entry<String, Data> e : this._vars.entrySet())
+		{
+			System.out.println("VAR: " + e.getKey() + " => " +  e.getValue());
+		}
+	}
+
+	public void printInVarReuse() {
+		for (Entry<String, Data> e : this._inVarReuse.entrySet())
+		{
+			System.out.println("VAR: " + e.getKey() + " => " + e.getValue());
+		}
+	}
+
 	private PreparedScript(PreparedScript that) {
 		//shallow copy, except for a separate symbol table
 		//and related meta data of reused inputs
@@ -130,7 +144,11 @@ public class PreparedScript implements ConfigurableAPI
 		_dmlconf = dmlconf;
 		_cconf = cconf;
 	}
-	
+
+	public void clearInVarReuse() {
+		this._inVarReuse.clear();
+	}
+
 	@Override
 	public void resetConfig() {
 		_dmlconf.set(new DMLConfig());

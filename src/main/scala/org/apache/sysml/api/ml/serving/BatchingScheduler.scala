@@ -1,7 +1,5 @@
 package org.apache.sysml.api.ml.serving
-
 import java.util.concurrent.ConcurrentHashMap
-
 import scala.math.{floor, max}
 
 trait BatchingScheduler extends Scheduler {
@@ -19,9 +17,9 @@ trait BatchingScheduler extends Scheduler {
                                     batchSize: Int,
                                     execType: String): Unit = {
         val latencyObjective = latencyObjectives.get(model)
-        if (latency != latencyObjective.toNanos) {
+        val prevSize = modelBatchSizes.get(execType).get(model)
+        if ((latency != latencyObjective.toNanos) && (batchSize == prevSize)) {
             modelBatchSizes.synchronized({
-                val prevSize = modelBatchSizes.get(execType).get(model)
                 modelBatchSizes.get(execType).put(model,
                     if (latency < latencyObjective.toNanos) prevSize+2 else max(floor(prevSize*0.90).toInt, 1))
             })
@@ -40,27 +38,30 @@ trait BatchingScheduler extends Scheduler {
       */
     def getSchedulableModels(execType: String) : Set[String] = {
         var batchableModels = Set[String]()
-        var shortFuse = Set[(String,Long)]()
+        var shortFuse = Set[String]()
         val keyIterator = modelQueues.keys()
         while (keyIterator.hasMoreElements) {
             val name = keyIterator.nextElement()
             if (modelQueues.get(name).size() > 0) {
                 val nextRequest = modelQueues.get(name).peek()
                 assert(nextRequest != null, "Something is wrong. Next request should not be null")
-                if (checkShortFuse(nextRequest))
-                    shortFuse += ((name, nextRequest.receivedTime - System.nanoTime()))
 
-                if (modelQueues.get(name).size() >= getOptimalBatchSize(name, execType))
+                if (checkShortFuse(nextRequest)) {
+                    shortFuse += name
+                }
+
+                if (modelQueues.get(name).size() >= getOptimalBatchSize(name, execType)) {
                     batchableModels += name
+                }
             }
         }
 
-        var shortFuseArray = Set[String]()
-        if (shortFuse.nonEmpty) {
-            shortFuseArray += shortFuse.minBy(x => x._2)._1
-        }
+//        var shortFuseArray = Set[String]()
+//        if (shortFuse.nonEmpty) {
+//            shortFuseArray += shortFuse.minBy(x => x._2)._1
+//        }
 
-        if (shortFuseArray.nonEmpty) shortFuseArray else batchableModels
+        if (shortFuse.nonEmpty) shortFuse else batchableModels
     }
 
     /**

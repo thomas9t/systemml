@@ -32,8 +32,15 @@ case class Batch(size: Int, expectedTime: Long, priority: Double, modelName: Str
 
 class BatchQueue(execType: String, name: String) extends PriorityBlockingQueue[Batch] {
     private val expectedExecutionTime = new LongAdder()
+    private var prevFirstRequest= Map[String, SchedulingRequest]()
 
     def getName : String = { name }
+
+    def updatePrevRequest(name: String, request: SchedulingRequest) : Unit = {
+        prevFirstRequest += (name -> request)
+    }
+
+    def getPrevRequest(name: String) : SchedulingRequest = { prevFirstRequest.getOrElse(name, null) }
 
     def enqueue(batch: Batch) : Unit = {
         synchronized {
@@ -91,8 +98,9 @@ class JmlcExecutor(scheduler: Scheduler, execType: String, gCtx: GPUContext, nam
             val batchedMatrixData = BatchingUtils.batchRequests(requests)
             val batchingTime = System.nanoTime() - start
             val req = requests(0)
+            println("BEGIN PROCESS: " + req.model.name + " ON " + name)
             val modelAcquireStart = System.nanoTime()
-            val script = scheduler.modelManager.acquire(req.model.name, execType).clone(false)
+            val script = scheduler.modelManager.acquire(req.model.name, execType, name)
             val modelAcquireTime = System.nanoTime() - modelAcquireStart
             script.setGpuContext(gCtx)
             script.setMatrix(req.model.inputVarName, batchedMatrixData, false)
@@ -102,13 +110,14 @@ class JmlcExecutor(scheduler: Scheduler, execType: String, gCtx: GPUContext, nam
             responses = BatchingUtils.unbatchRequests(requests, res)
             val stop = System.nanoTime()
             val modelReleaseStart = System.nanoTime()
-            scheduler.modelManager.release(req.model.name)
+            scheduler.modelManager.release(req.model.name, req.memUse)
             val modelReleaseTime = System.nanoTime() - modelReleaseStart
             scheduler.onCompleteCallback(req.model.name, stop - req.receivedTime, requests.length, execType)
             if (req.statistics != null)
                 setStatistics(requests, start, batchingTime, execTime, modelAcquireTime, modelReleaseTime)
             if (prevModel.nonEmpty)
                 prevModel = req.model.name
+            println("DONE PROCESS: " + req.model.name + " ON " + name)
         }
         responses
     }
