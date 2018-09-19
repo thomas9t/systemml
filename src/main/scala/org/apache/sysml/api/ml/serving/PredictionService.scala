@@ -381,8 +381,9 @@ object PredictionService extends PredictionJsonProtocol with AddModelJsonProtoco
         if (!(dir.exists && dir.isDirectory))
             throw new Exception("Weight directory: " + dirname + " is invalid")
 
-        val weightsWithSize = dir.listFiles().filter(_.isFile).
-            map(_.toString).filter(x => (x.slice(x.length-3, x.length) != "mtd") &&
+        val weightsWithSize = dir.listFiles().filter(
+            x => !(x.isDirectory && (x.toString contains "binary"))).map(_.toString).filter(
+            x => (x.slice(x.length-3, x.length) != "mtd") &&
             !(x contains "_bin.mtx")).
           map(x => getNameFromPath(x) -> registerWeight(x, dirname)).toMap
 

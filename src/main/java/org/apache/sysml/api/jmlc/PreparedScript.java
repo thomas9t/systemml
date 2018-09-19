@@ -511,8 +511,9 @@ public class PreparedScript implements ConfigurableAPI
 			}
 		}
 
-		// cleanup GPU objects
-		_gCtx.clearTemporaryMemory();
+		// cleanup GPU objects if necessary
+		if (_gCtx != null)
+			_gCtx.clearTemporaryMemory();
 
 		//clear thread-local configurations
 		ConfigurationManager.clearLocalConfigs();
