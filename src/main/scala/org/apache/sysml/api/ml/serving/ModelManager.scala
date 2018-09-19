@@ -64,7 +64,7 @@ trait ModelManager {
     def putWeight(name: String, weight: MatrixBlock) : Unit
 
     def acquire(name: String, execType: String, execName: String) : PreparedScript
-    
+
     def release(name: String) : Unit
 }
 
