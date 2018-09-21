@@ -282,9 +282,13 @@ public class Connection implements Closeable
 	 * @param parsePyDML {@code true} if PyDML, {@code false} if DML
 	 * @return PreparedScript object representing the precompiled script
 	 */
+
 	public PreparedScript prepareScript(String script, Map<String,String> nsscripts, Map<String, String> args, String[] inputs, String[] outputs, boolean parsePyDML) {
 		DMLScript.SCRIPT_TYPE = parsePyDML ? ScriptType.PYDML : ScriptType.DML;
-		
+
+		// Set DML Options here:
+		ConfigurationManager.setLocalOptions(new DMLOptions(args, false, 10, false, Explain.ExplainType.NONE, RUNTIME_PLATFORM.SINGLE_NODE, gpu, forceGPU, parsePyDML ? ScriptType.PYDML : ScriptType.DML, null, script));
+
 		//check for valid names of passed arguments
 		String[] invalidArgs = args.keySet().stream()
 			.filter(k -> k==null || !k.startsWith("$")).toArray(String[]::new);
