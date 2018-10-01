@@ -19,10 +19,7 @@
 
 package org.apache.sysml.api.jmlc;
 
-import java.util.Collections;
-import java.util.HashMap;
-import java.util.HashSet;
-import java.util.List;
+import java.util.*;
 import java.util.Map.Entry;
 
 import org.apache.commons.lang.NotImplementedException;
@@ -30,6 +27,8 @@ import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
 import org.apache.sysml.api.ConfigurableAPI;
 import org.apache.sysml.api.DMLException;
+import org.apache.sysml.api.ScriptExecutorUtils;
+import org.apache.sysml.api.ScriptExecutorUtils.SystemMLAPI;
 import org.apache.sysml.api.DMLScript;
 import org.apache.sysml.conf.CompilerConfig;
 import org.apache.sysml.conf.ConfigurationManager;
@@ -53,6 +52,7 @@ import org.apache.sysml.runtime.instructions.cp.DoubleObject;
 import org.apache.sysml.runtime.instructions.cp.IntObject;
 import org.apache.sysml.runtime.instructions.cp.ScalarObject;
 import org.apache.sysml.runtime.instructions.cp.StringObject;
+import org.apache.sysml.runtime.instructions.gpu.context.GPUContext;
 import org.apache.sysml.runtime.matrix.MatrixCharacteristics;
 import org.apache.sysml.runtime.matrix.MetaDataFormat;
 import org.apache.sysml.runtime.matrix.data.FrameBlock;
@@ -73,15 +73,17 @@ public class PreparedScript implements ConfigurableAPI
 	//input/output specification
 	private final HashSet<String> _inVarnames;
 	private final HashSet<String> _outVarnames;
-	private final HashMap<String,Data> _inVarReuse;
+	private final LocalVariableMap _inVarReuse;
 	
 	//internal state (reused)
 	private final Program _prog;
 	private final LocalVariableMap _vars;
 	private final DMLConfig _dmlconf;
 	private final CompilerConfig _cconf;
+
 	private boolean _isStatisticsEnabled = false;
-	
+	private boolean _gatherMemStats = false;
+
 	private PreparedScript(PreparedScript that) {
 		//shallow copy, except for a separate symbol table
 		//and related meta data of reused inputs
@@ -92,7 +94,7 @@ public class PreparedScript implements ConfigurableAPI
 		_vars.setRegisteredOutputs(that._outVarnames);
 		_inVarnames = that._inVarnames;
 		_outVarnames = that._outVarnames;
-		_inVarReuse = new HashMap<>(that._inVarReuse);
+		_inVarReuse = new LocalVariableMap(that._inVarReuse);
 		_dmlconf = that._dmlconf;
 		_cconf = that._cconf;
 	}
@@ -115,7 +117,7 @@ public class PreparedScript implements ConfigurableAPI
 		Collections.addAll(_inVarnames, inputs);
 		_outVarnames = new HashSet<>();
 		Collections.addAll(_outVarnames, outputs);
-		_inVarReuse = new HashMap<>();
+		_inVarReuse = new LocalVariableMap();
 		
 		//attach registered outputs (for dynamic recompile)
 		_vars.setRegisteredOutputs(_outVarnames);
@@ -141,7 +143,7 @@ public class PreparedScript implements ConfigurableAPI
 	 */
 	public void gatherMemStats(boolean stats) {
 		this._isStatisticsEnabled = this._isStatisticsEnabled || ConfigurationManager.isStatistics();
-		DMLScript.JMLC_MEM_STATISTICS = stats;
+		this._gatherMemStats = stats;
 	}
 	
 	@Override
@@ -309,7 +311,7 @@ public class PreparedScript implements ConfigurableAPI
 	 */
 	public void setMatrix(String varname, MatrixBlock matrix, boolean reuse) {
 		if( !_inVarnames.contains(varname) )
-			throw new DMLException("Unspecified input variable: "+varname);
+			throw new DMLException("Unspecified input variable: " + varname);
 				
 		int blocksize = ConfigurationManager.getBlocksize();
 		
@@ -320,12 +322,28 @@ public class PreparedScript implements ConfigurableAPI
 		mo.acquireModify(matrix); 
 		mo.release();
 		
-		//put create matrix wrapper into symbol table
-		_vars.put(varname, mo);
+		setMatrix(varname, mo, reuse);
+	}
+
+	/**
+	 * Binds a matrix object to a registered input variable.
+	 * If reuse requested, then the input is guaranteed to be
+	 * preserved over multiple <code>executeScript</code> calls.
+	 *
+	 * @param varname input variable name
+	 * @param matrix matrix represented as a MatrixObject
+	 * @param reuse if {@code true}, preserve value over multiple {@code executeScript} calls
+	 */
+	public void setMatrix(String varname, MatrixObject matrix, boolean reuse) {
+		if( !_inVarnames.contains(varname) )
+			throw new DMLException("Unspecified input variable: "+ varname);
+
+		_vars.put(varname, matrix);
 		if( reuse ) {
-			mo.enableCleanup(false); //prevent cleanup
-			_inVarReuse.put(varname, mo);
+			matrix.enableCleanup(false); //prevent cleanup
+			_inVarReuse.put(varname, matrix);
 		}
+
 	}
 
 	/**
@@ -433,7 +451,23 @@ public class PreparedScript implements ConfigurableAPI
 	public void clearParameters() {
 		_vars.removeAll();
 	}
-	
+
+	/**
+	 * Remove all references to pinned variables from this script.
+	 * Note: this *does not* remove the underlying data. It merely
+	 * removes a reference to it from this prepared script. This is
+	 * useful if you want to maintain an independent cache of weights
+	 * and allow the JVM to garbage collect under memory pressure.
+	 */
+	public void clearPinnedData() { _inVarReuse.removeAll(); }
+
+	public boolean hasPinnedVars() { return _inVarReuse.entrySet().size() > 0; }
+
+	/**
+	 * GPU Context to use for execution
+	 */
+	List<GPUContext> _gpuCtx = null;
+
 	/**
 	 * Executes the prepared script over the bound inputs, creating the
 	 * result variables according to bound and registered outputs.
@@ -443,20 +477,24 @@ public class PreparedScript implements ConfigurableAPI
 	public ResultVariables executeScript() {
 		//add reused variables
 		_vars.putAll(_inVarReuse);
-		
+
+		// clear prior thread local configurations (left over from previous run)
+		ConfigurationManager.clearLocalConfigs();
+		ConfigurationManager.resetStatistics();
+
 		//set thread-local configurations
 		ConfigurationManager.setLocalConfig(_dmlconf);
 		ConfigurationManager.setLocalConfig(_cconf);
-		
+		ConfigurationManager.setStatistics(_isStatisticsEnabled);
+		ConfigurationManager.setJMLCMemStats(_gatherMemStats);
+		ConfigurationManager.setFinegrainedStatistics(_gatherMemStats);
+
 		//create and populate execution context
-		ExecutionContext ec = ExecutionContextFactory.createContext(_vars, _prog);
-		
-		//core execute runtime program
-		_prog.execute(ec);
-		
-		//cleanup unnecessary outputs
-		_vars.removeAllNotIn(_outVarnames);
-		
+		ScriptExecutorUtils.executeRuntimeProgram(
+				_prog, _dmlconf, ConfigurationManager.isStatistics() ?
+						ConfigurationManager.getDMLOptions().getStatisticsMaxHeavyHitters() : 0,
+				_vars, _outVarnames, SystemMLAPI.JMLC, _gpuCtx);
+
 		//construct results
 		ResultVariables rvars = new ResultVariables();
 		for( String ovar : _outVarnames ) {
@@ -464,11 +502,6 @@ public class PreparedScript implements ConfigurableAPI
 			if( tmpVar != null )
 				rvars.addResult(ovar, tmpVar);
 		}
-		
-		//clear thread-local configurations
-		ConfigurationManager.clearLocalConfigs();
-		
-		ConfigurationManager.resetStatistics();
 
 		return rvars;
 	}
