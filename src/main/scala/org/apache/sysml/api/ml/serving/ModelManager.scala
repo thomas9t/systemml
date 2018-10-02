@@ -64,22 +64,27 @@ trait ModelManager {
     }
 
     def getPreparedScript(name: String, executor: JmlcExecutor) : PreparedScript = {
-        if (scripts(name).containsKey(executor))
-            return scripts(name).get(executor)
+        val script = scripts(name).get(executor)
+        if (script != null)
+            return script
 
-        // otherwise we may need to compile...
-        // Note: this logic will need to be revisited if we add more executor types beyond CPU and GPU
-        val model = models(name)
-        val inputs = model.weightFiles.keys.toArray[String] ++ Array[String](model.inputVarName)
-        if (executor.getExecType == "CPU") {
-            if (!cpuScripts.contains(name))
-                cpuScripts += name -> conn.prepareScript(model.dml, inputs, Array[String](model.outputVarName))
-            else
+        models(name).synchronized {
+            println("COMPILING A NEW SCRIPT")
+            // otherwise we may need to compile...
+            // Note: this logic will need to be revisited if we add more executor types beyond CPU and GPU
+            val model = models(name)
+            val inputs = model.weightFiles.keys.toArray[String] ++ Array[String](model.inputVarName)
+            if (executor.getExecType == "CPU") {
+                if (!cpuScripts.contains(name))
+                    cpuScripts += name -> conn.prepareScript(model.dml, inputs, Array[String](model.outputVarName))
                 scripts(name).put(executor, cpuScripts(name))
-        } else if (executor.getExecType == "GPU") {
-            val script = conn.prepareScript(model.dml, inputs, Array[String](model.outputVarName),
-                true, true, executor.getGpuIndex)
-            scripts(name).put(executor, script)
+            } else if (executor.getExecType == "GPU") {
+                val script = conn.prepareScript(model.dml, inputs, Array[String](model.outputVarName),
+                    true, true, executor.getGpuIndex)
+                scripts(name).put(executor, script)
+            } else {
+                throw new Exception("Invalid executor type: " + executor.getExecType)
+            }
         }
         scripts(name).get(executor)
     }
@@ -136,7 +141,7 @@ object ReferenceCountedModelManager extends ModelManager {
 
         // check if this model has been compiled for this executor
 
-        val ps = getPreparedScript(name, executor).clone(false)
+        val ps = getPreparedScript(name, executor)
         /*if (modelRefCounts(name).longValue() > 0 && ps.hasPinnedVars) {
             modelRefCounts(name).increment()
             return ps.clone(false)
@@ -145,12 +150,12 @@ object ReferenceCountedModelManager extends ModelManager {
         // otherwise we need to re-pin the weights, possibly reading them from disk
         val model = models(name)
         model.synchronized {
-            if (modelRefCounts(name).longValue() == 0)
+            if (modelRefCounts(name).longValue() == 0 || !ps.hasPinnedVars)
                 model.weightFiles.foreach(x => ps.setMatrix(x._1, weightCache.getAsMatrixBlock(x._2), true))
             modelRefCounts(name).increment()
         }
         println("DONE ACQUIRING MODEL: " + name)
-        ps
+        ps.clone(false)
     }
 
     override def disableCleanup(): Unit = {
