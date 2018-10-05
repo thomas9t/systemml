@@ -87,6 +87,7 @@ public class PreparedScript implements ConfigurableAPI
 	private PreparedScript(PreparedScript that) {
 		//shallow copy, except for a separate symbol table
 		//and related meta data of reused inputs
+		//also inherit the GPU context (if any) of the parent script
 		_prog = that._prog.clone(false);
 		_vars = new LocalVariableMap();
 		for(Entry<String, Data> e : that._vars.entrySet())
@@ -97,6 +98,7 @@ public class PreparedScript implements ConfigurableAPI
 		_inVarReuse = new LocalVariableMap(that._inVarReuse);
 		_dmlconf = that._dmlconf;
 		_cconf = that._cconf;
+		_gpuCtx = that._gpuCtx;
 	}
 	
 	/**
@@ -159,6 +161,11 @@ public class PreparedScript implements ConfigurableAPI
 		catch( DMLRuntimeException e ) {
 			throw new RuntimeException(e);
 		}
+	}
+
+	public void setGpuContext(GPUContext gCtx) {
+		this._gpuCtx = new ArrayList<>();
+		this._gpuCtx.add(gCtx);
 	}
 	
 	/**

@@ -68,8 +68,8 @@ object LocalityAwareScheduler extends BatchingScheduler {
     val globalDiskQueues = new ConcurrentHashMap[String, BatchQueue]()
     val modelLocality = new ConcurrentHashMap[String, Set[BatchQueue]]()
 
-    override def start(numCores: Int, cpuMemoryBudgetInBytes: Long, numGpus: Int): Unit = {
-        super.start(numCores, cpuMemoryBudgetInBytes, numGpus)
+    override def start(numCores: Int, cpuMemoryBudgetInBytes: Long, gpus: String): Unit = {
+        super.start(numCores, cpuMemoryBudgetInBytes, gpus)
 
         executorTypes.foreach ( x => {
             globalCacheQueues.putIfAbsent(x, new BatchQueue(x, x + "-CACHE"))

@@ -64,7 +64,7 @@ class BatchQueue(execType: String, name: String) extends PriorityBlockingQueue[B
     def getExecType : String = { execType }
 }
 
-class JmlcExecutor(scheduler: Scheduler, execType: String, name: String, gpuIndex: Int = -9) extends Runnable {
+class JmlcExecutor(scheduler: Scheduler, execType: String, name: String, gCtx: GPUContext) extends Runnable {
     @volatile protected var _shouldShutdown: Boolean = false
 
     var prevModel = ""
@@ -76,8 +76,6 @@ class JmlcExecutor(scheduler: Scheduler, execType: String, name: String, gpuInde
     def getExecType: String = { execType }
 
     def getName: String = { name }
-
-    def getGpuIndex: Int = { gpuIndex }
 
     def run(): Unit = {
         Thread.sleep(1000)
@@ -104,6 +102,7 @@ class JmlcExecutor(scheduler: Scheduler, execType: String, name: String, gpuInde
                 println("BEGIN PROCESS: " + req.model.name + " ON " + name)
                 val modelAcquireStart = System.nanoTime()
                 val script = scheduler.modelManager.acquire(req.model.name, this)
+                //script.setGpuContext(gCtx)
                 val modelAcquireTime = System.nanoTime() - modelAcquireStart
                 script.setMatrix(req.model.inputVarName, batchedMatrixData, false)
                 println("BEGIN EXEC: " + req.model.name + " ON " + name)

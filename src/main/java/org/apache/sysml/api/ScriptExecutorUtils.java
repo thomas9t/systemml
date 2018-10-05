@@ -296,7 +296,6 @@ public class ScriptExecutorUtils {
 						Data data = ec.getVariable(outVar);
 						if(data != null && data instanceof MatrixObject) {
 							for(GPUContext gCtx : ec.getGPUContexts()) {
-								gCtx.clearTemporaryMemory();
 								GPUObject gpuObj = ((MatrixObject)data).getGPUObject(gCtx);
 								if(gpuObj != null && gpuObj.isDirty()) {
 									gpuObj.acquireHostRead(null);
@@ -305,6 +304,10 @@ public class ScriptExecutorUtils {
 						}
 					}
 				}
+
+				for (GPUContext gCtx : ec.getGPUContexts())
+					gCtx.clearTemporaryMemory();
+
 				// -----------------------------------------------------------------
 			}
 			if( ConfigurationManager.isCodegenEnabled() )

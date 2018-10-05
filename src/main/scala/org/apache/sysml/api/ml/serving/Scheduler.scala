@@ -41,9 +41,14 @@ trait Scheduler {
     implicit val ec : ExecutionContext = ExecutionContext.fromExecutor(Executors.newFixedThreadPool(2000))
     var executorTypes = Array[String]()
     var modelManager = ReferenceCountedModelManager
+    modelManager.disableCleanup()
     val requestsProcessed = new ConcurrentHashMap[String,LongAdder]()
 
-    def start(numCores: Int, cpuMemoryBudgetInBytes: Long, numGpus: Int): Unit = {
+    def start(numCores: Int, cpuMemoryBudgetInBytes: Long, gpus: String): Unit = {
+        GPUContextPool.AVAILABLE_GPUS = gpus
+        val gCtxs = GPUContextPool.getAllGPUContexts
+        val numGpus = gCtxs.size
+
         executorService = Executors.newFixedThreadPool(numCores + numGpus)
         modelManager.setAvailableMemory((cpuMemoryBudgetInBytes*0.80).toLong)
 
@@ -54,12 +59,12 @@ trait Scheduler {
 
         println("STARTING SCHEDULER WITH: " + numCores + " CPU => " + numGpus + " GPUS")
         for (i <- 0 until numCores) {
-            val exec = new JmlcExecutor(this, "CPU", "CPU" + i)
+            val exec = new JmlcExecutor(this, "CPU", "CPU" + i, null)
             executorQueues.put(exec, new BatchQueue("CPU", "CPU" + i))
             executorService.submit(exec)
         }
         for (i <- 0 until numGpus) {
-            val exec = new JmlcExecutor(this, "GPU","GPU" + i, i)
+            val exec = new JmlcExecutor(this, "GPU","GPU" + i, gCtxs.get(i))
             executorQueues.put(exec, new BatchQueue("GPU", "GPU" + i))
             executorService.submit(exec)
         }

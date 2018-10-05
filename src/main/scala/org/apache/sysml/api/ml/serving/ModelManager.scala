@@ -1,6 +1,5 @@
 package org.apache.sysml.api.ml.serving
 
-import java.util
 import java.util.concurrent.atomic.LongAdder
 
 import org.apache.sysml.api.jmlc.{Connection, PreparedScript}
@@ -10,12 +9,6 @@ import org.apache.sysml.utils.PersistentLRUCache
 trait ModelManager {
 
     val conn: Connection = new Connection()
-
-    // for GPU or mixed executors we need to have multiple prepared scripts
-    var scripts: Map[String, util.HashMap[JmlcExecutor, PreparedScript]] = Map()
-
-    // we can have a single prepared script for CPU only executors
-    var cpuScripts: Map[String, PreparedScript] = Map()
 
     val availableMemory = new LongAdder
 
@@ -63,41 +56,6 @@ trait ModelManager {
         }
     }
 
-    def getPreparedScript(name: String, executor: JmlcExecutor) : PreparedScript = {
-        val script = scripts(name).get(executor)
-        if (script != null)
-            return script
-
-        models(name).synchronized {
-            println("COMPILING A NEW SCRIPT")
-            // otherwise we may need to compile...
-            // Note: this logic will need to be revisited if we add more executor types beyond CPU and GPU
-            val model = models(name)
-            val inputs = model.weightFiles.keys.toArray[String] ++ Array[String](model.inputVarName)
-            if (executor.getExecType == "CPU") {
-                if (!cpuScripts.contains(name))
-                    cpuScripts += name -> conn.prepareScript(model.dml, inputs, Array[String](model.outputVarName))
-                scripts(name).put(executor, cpuScripts(name))
-            } else if (executor.getExecType == "GPU") {
-                val script = conn.prepareScript(model.dml, inputs, Array[String](model.outputVarName),
-                    true, true, executor.getGpuIndex)
-                scripts(name).put(executor, script)
-            } else {
-                throw new Exception("Invalid executor type: " + executor.getExecType)
-            }
-        }
-        scripts(name).get(executor)
-    }
-
-    def clearPinnedData(name: String) : Unit = {
-        val scriptIterator = scripts(name).values().iterator()
-        while (scriptIterator.hasNext) {
-            val script = scriptIterator.next()
-            script.clearPinnedData()
-        }
-
-    }
-
     def disableCleanup() : Unit = { cleanupEnabled = false }
 
     def disableMemcheck() : Unit = { memCheckEnabled = false }
@@ -139,9 +97,7 @@ object ReferenceCountedModelManager extends ModelManager {
         // compiled for various executor types (e.g. GPU/CPU)
         // TODO: Better handling of the GPU pinned variables issue
 
-        // check if this model has been compiled for this executor
-
-        val ps = getPreparedScript(name, executor)
+        val ps = models(name).script(executor.getExecType)
         /*if (modelRefCounts(name).longValue() > 0 && ps.hasPinnedVars) {
             modelRefCounts(name).increment()
             return ps.clone(false)
@@ -150,12 +106,14 @@ object ReferenceCountedModelManager extends ModelManager {
         // otherwise we need to re-pin the weights, possibly reading them from disk
         val model = models(name)
         model.synchronized {
-            if (modelRefCounts(name).longValue() == 0 || !ps.hasPinnedVars)
+            if (!ps.hasPinnedVars) {
+                println("PINNING WEIGHTS")
                 model.weightFiles.foreach(x => ps.setMatrix(x._1, weightCache.getAsMatrixBlock(x._2), true))
+            }
             modelRefCounts(name).increment()
         }
         println("DONE ACQUIRING MODEL: " + name)
-        ps.clone(false)
+        ps
     }
 
     override def disableCleanup(): Unit = {
@@ -167,11 +125,11 @@ object ReferenceCountedModelManager extends ModelManager {
         modelRefCounts(name).decrement()
 
         println("RELEASE MODEL: " + name + " => " + modelRefCounts(name).longValue())
-        if (modelRefCounts(name).longValue() == 0 && cleanupEnabled) {
+        if (modelRefCounts(name).longValue() == 0) {
             models(name).synchronized {
                 if (modelRefCounts(name).longValue() == 0) {
                     println("ACTUALLY RELEASING THE MODEL")
-                    clearPinnedData(name)
+                    models(name).script.foreach { x => x._2.clearPinnedData() }
                     println("CALLING RELEASE MEMORY")
                     releaseMemory(models(name).weightMem)
                 }
@@ -182,7 +140,6 @@ object ReferenceCountedModelManager extends ModelManager {
     def put(model: Model) : Unit = {
         models += (model.name -> model)
         modelRefCounts += (model.name -> new LongAdder())
-        scripts += (model.name -> new util.HashMap[JmlcExecutor, PreparedScript]())
     }
 
     def putWeight(name: String, weight: MatrixBlock) : Unit = {

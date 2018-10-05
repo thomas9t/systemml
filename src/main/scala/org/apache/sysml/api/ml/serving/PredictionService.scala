@@ -71,7 +71,7 @@ case class AddModelRequest(name: String, dml: String, inputVarName: String,
                            latencyObjective: String, batchSize: Array[Int], memUse: Array[Long])
 
 case class Model(name: String,
-                 dml: String,
+                 script: Map[String,PreparedScript],
                  inputVarName: String,
                  outputVarName: String,
                  latencyObjective: Duration,
@@ -215,11 +215,12 @@ object PredictionService extends PredictionJsonProtocol with AddModelJsonProtoco
         scheduler = LocalityAwareScheduler
         //scheduler = new BasicBatchingScheduler(timeout)
         //scheduler = new NonBatchingScheduler(timeout)
-        val numGpus = 0
-        val numCores = Runtime.getRuntime.availableProcessors() - 1
+        val gpus = "-1"
+        //val numCores = Runtime.getRuntime.availableProcessors() - 1
+        val numCores = 0
         val maxMemory = Runtime.getRuntime.maxMemory()  // total memory is just what the JVM has currently allocated
         println("TOTAL MEMORY: " + maxMemory)
-        scheduler.start(numCores, maxMemory, numGpus)
+        scheduler.start(numCores, maxMemory, gpus)
 
         // Define unsecured routes: /predict and /health
         val unsecuredRoutes = {
@@ -288,6 +289,15 @@ object PredictionService extends PredictionJsonProtocol with AddModelJsonProtoco
                                               val weightsInfo = processWeights(request.weightsDir)
                                               val inputs = weightsInfo._1.keys.toArray ++ Array[String](request.inputVarName)
 
+                                              // compile for executor types
+                                              val scriptCpu = conn.prepareScript(
+                                                  request.dml, inputs, Array[String](request.outputVarName))
+
+                                              val scriptGpu = if (gpus != null) conn.prepareScript(
+                                                    request.dml, inputs, Array[String](request.outputVarName),
+                                                    true, true, 0) else null
+                                              val scripts = Map("CPU" -> scriptCpu, "GPU" -> scriptGpu)
+
                                               // b = cov(x,y) / var(x)
                                               // a = mean(y) - b*mean(x)
                                               val n = max(request.batchSize.length, 1).toDouble
@@ -302,7 +312,7 @@ object PredictionService extends PredictionJsonProtocol with AddModelJsonProtoco
 
                                               // now register the created model
                                               val model = Model(request.name,
-                                                  request.dml,
+                                                  scripts,
                                                   request.inputVarName,
                                                   request.outputVarName,
                                                   Duration(request.latencyObjective),
@@ -388,6 +398,7 @@ object PredictionService extends PredictionJsonProtocol with AddModelJsonProtoco
 
     def convertToBinaryIfNecessary(path: String, dir: String) : (MatrixBlock, String) = {
         var pathActual = path
+        println("READING: " + path)
         val data = conn.readMatrix(path)
 
         if (!isBinaryFormat(path)) {
