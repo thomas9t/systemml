@@ -113,7 +113,7 @@ object ReferenceCountedModelManager extends ModelManager {
             modelRefCounts(name).increment()
         }
         println("DONE ACQUIRING MODEL: " + name)
-        ps
+        ps.clone(false)
     }
 
     override def disableCleanup(): Unit = {
@@ -129,6 +129,7 @@ object ReferenceCountedModelManager extends ModelManager {
             models(name).synchronized {
                 if (modelRefCounts(name).longValue() == 0) {
                     println("ACTUALLY RELEASING THE MODEL")
+                    println("Models(name)" + models(name))
                     models(name).script.foreach { x => x._2.clearPinnedData() }
                     println("CALLING RELEASE MEMORY")
                     releaseMemory(models(name).weightMem)

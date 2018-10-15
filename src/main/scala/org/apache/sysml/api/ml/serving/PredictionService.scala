@@ -215,9 +215,9 @@ object PredictionService extends PredictionJsonProtocol with AddModelJsonProtoco
         scheduler = LocalityAwareScheduler
         //scheduler = new BasicBatchingScheduler(timeout)
         //scheduler = new NonBatchingScheduler(timeout)
-        val gpus = "-1"
+        val gpus = null
         //val numCores = Runtime.getRuntime.availableProcessors() - 1
-        val numCores = 0
+        val numCores = 2
         val maxMemory = Runtime.getRuntime.maxMemory()  // total memory is just what the JVM has currently allocated
         println("TOTAL MEMORY: " + maxMemory)
         scheduler.start(numCores, maxMemory, gpus)
@@ -292,11 +292,12 @@ object PredictionService extends PredictionJsonProtocol with AddModelJsonProtoco
                                               // compile for executor types
                                               val scriptCpu = conn.prepareScript(
                                                   request.dml, inputs, Array[String](request.outputVarName))
+                                              var scripts = Map("CPU" -> scriptCpu)
 
-                                              val scriptGpu = if (gpus != null) conn.prepareScript(
+                                              if (gpus != null)
+                                                  scripts += ("GPU" -> conn.prepareScript(
                                                     request.dml, inputs, Array[String](request.outputVarName),
-                                                    true, true, 0) else null
-                                              val scripts = Map("CPU" -> scriptCpu, "GPU" -> scriptGpu)
+                                                    true, true, 0))
 
                                               // b = cov(x,y) / var(x)
                                               // a = mean(y) - b*mean(x)

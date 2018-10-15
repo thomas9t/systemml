@@ -21,9 +21,11 @@ package org.apache.sysml.api.ml.serving
 import scala.concurrent.Future
 import scala.concurrent.duration._
 import java.util.concurrent._
+import java.util.List
 import java.util.concurrent.atomic.LongAdder
 
 import org.apache.sysml.runtime.instructions.gpu.context.GPUContextPool
+import org.apache.sysml.runtime.instructions.gpu.context.GPUContext
 
 import scala.concurrent.ExecutionContext
 
@@ -45,9 +47,13 @@ trait Scheduler {
     val requestsProcessed = new ConcurrentHashMap[String,LongAdder]()
 
     def start(numCores: Int, cpuMemoryBudgetInBytes: Long, gpus: String): Unit = {
-        GPUContextPool.AVAILABLE_GPUS = gpus
-        val gCtxs = GPUContextPool.getAllGPUContexts
-        val numGpus = gCtxs.size
+        var numGpus = 0
+        var gCtxs: List[GPUContext] = null
+        if (gpus != null) {
+            GPUContextPool.AVAILABLE_GPUS = gpus
+            gCtxs = GPUContextPool.getAllGPUContexts
+            numGpus = gCtxs.size
+        }
 
         executorService = Executors.newFixedThreadPool(numCores + numGpus)
         modelManager.setAvailableMemory((cpuMemoryBudgetInBytes*0.80).toLong)
