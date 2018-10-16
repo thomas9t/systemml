@@ -34,46 +34,20 @@ public class GPUMatrixMemoryManager {
 	public GPUMatrixMemoryManager(GPUMemoryManager gpuManager) {
 		this.gpuManager = gpuManager;
 	}
-	
+
 	/**
 	 * Adds the GPU object to the memory manager
-	 * 
+	 *
 	 * @param gpuObj the handle to the GPU object
 	 */
 	void addGPUObject(GPUObject gpuObj) {
 		gpuObjects.add(gpuObj);
 	}
-	
+
+
 	/**
-	 * Returns worst-case contiguous memory size
-	 * @param gpuObj gpu object
-	 * @return memory size in bytes
-	 */
-	long getWorstCaseContiguousMemorySize(GPUObject gpuObj) {
-		long ret = 0;
-		if(!gpuObj.isDensePointerNull()) {
-			if(!gpuObj.shadowBuffer.isBuffered())
-				ret = gpuManager.allPointers.get(gpuObj.getDensePointer()).getSizeInBytes();
-			else
-				ret = 0; // evicted hence no contiguous memory on GPU
-		}
-		else if(gpuObj.getJcudaSparseMatrixPtr() != null) {
-			CSRPointer sparsePtr = gpuObj.getJcudaSparseMatrixPtr();
-			if(sparsePtr.nnz > 0) {
-				if(sparsePtr.rowPtr != null)
-					ret = Math.max(ret, gpuManager.allPointers.get(sparsePtr.rowPtr).getSizeInBytes());
-				if(sparsePtr.colInd != null)
-					ret = Math.max(ret, gpuManager.allPointers.get(sparsePtr.colInd).getSizeInBytes());
-				if(sparsePtr.val != null)
-					ret = Math.max(ret, gpuManager.allPointers.get(sparsePtr.val).getSizeInBytes());
-			}
-		}
-		return ret;
-	}
-	
-	/**
-	 * Get list of all Pointers in a GPUObject 
-	 * @param gObj gpu object 
+	 * Get list of all Pointers in a GPUObject
+	 * @param gObj gpu object
 	 * @return set of pointers
 	 */
 	Set<Pointer> getPointers(GPUObject gObj) {
@@ -98,7 +72,7 @@ public class GPUMatrixMemoryManager {
 		}
 		return ret;
 	}
-	
+
 	/**
 	 * list of allocated {@link GPUObject} instances allocated on {@link GPUContext#deviceNum} GPU
 	 * These are matrices allocated on the GPU on which rmvar hasn't been called yet.
@@ -107,7 +81,7 @@ public class GPUMatrixMemoryManager {
 	 * so that an extraneous host to dev transfer can be avoided
 	 */
 	HashSet<GPUObject> gpuObjects = new HashSet<>();
-	
+
 	/**
 	 * Return all pointers in the first section
 	 * @return all pointers in this section
@@ -115,26 +89,22 @@ public class GPUMatrixMemoryManager {
 	Set<Pointer> getPointers() {
 		return gpuObjects.stream().flatMap(gObj -> getPointers(gObj).stream()).collect(Collectors.toSet());
 	}
-	
+
 	/**
 	 * Get pointers from the first memory sections "Matrix Memory"
 	 * @param locked return locked pointers if true
 	 * @param dirty return dirty pointers if true
+	 * @param isCleanupEnabled return pointers marked for cleanup if true
 	 * @return set of pointers
 	 */
-	Set<Pointer> getPointers(boolean locked, boolean dirty) {
-		return gpuObjects.stream().filter(gObj -> gObj.isLocked() == locked && gObj.isDirty() == dirty).flatMap(gObj -> getPointers(gObj).stream()).collect(Collectors.toSet());
+	Set<Pointer> getPointers(boolean locked, boolean dirty, boolean isCleanupEnabled) {
+		return gpuObjects.stream().filter(gObj -> gObj.isLocked() == locked && gObj.isDirty() == dirty
+				&& gObj.mat.isCleanupEnabled() == isCleanupEnabled).flatMap(gObj -> getPointers(gObj).stream()).collect(Collectors.toSet());
 	}
 
-	Set<Pointer> getPointers(boolean locked, boolean dirty, boolean cleanupEnabled) {
-		return gpuObjects.stream().filter(gObj -> gObj.isLocked() == locked &&
-				gObj.isCleanupEnabled() == cleanupEnabled &&
-				gObj.isDirty() == dirty).flatMap(gObj -> getPointers(gObj).stream()).collect(Collectors.toSet());
-	}
-	
 	/**
 	 * Clear all unlocked gpu objects
-	 * 
+	 *
 	 * @param opcode instruction code
 	 * @throws DMLRuntimeException if error
 	 */
