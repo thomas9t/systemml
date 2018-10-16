@@ -271,7 +271,6 @@ public class GPUContext {
 	 */
 	public GPUObject createGPUObject(MatrixObject mo) {
 		GPUObject ret = new GPUObject(this, mo);
-		ret.enableCleanup(mo.isCleanupEnabled());
 		getMemoryManager().getGPUMatrixMemoryManager().addGPUObject(ret);
 		return ret;
 	}

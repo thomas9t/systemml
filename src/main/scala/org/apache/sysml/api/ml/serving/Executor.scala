@@ -102,9 +102,10 @@ class JmlcExecutor(scheduler: Scheduler, execType: String, name: String, gCtx: G
                 println("BEGIN PROCESS: " + req.model.name + " ON " + name)
                 val modelAcquireStart = System.nanoTime()
                 val script = scheduler.modelManager.acquire(req.model.name, this)
-                //script.setGpuContext(gCtx)
                 val modelAcquireTime = System.nanoTime() - modelAcquireStart
                 script.setMatrix(req.model.inputVarName, batchedMatrixData, false)
+                if (gCtx != null)
+                    script.setGpuContext(gCtx)
                 println("BEGIN EXEC: " + req.model.name + " ON " + name)
                 val execStart = System.nanoTime()
                 val res = script.executeScript().getMatrixBlock(req.model.outputVarName)
@@ -120,7 +121,10 @@ class JmlcExecutor(scheduler: Scheduler, execType: String, name: String, gCtx: G
                 if (req.statistics != null)
                     setStatistics(requests, start, batchingTime, execTime, modelAcquireTime, modelReleaseTime)
                 if (prevModel.nonEmpty)
-                    prevModel = req.model.name
+                    scheduler.modelManager.unsetModelLocality(prevModel, this)
+                scheduler.modelManager.setModelLocality(req.model.name, this)
+                prevModel = req.model.name
+
                 println("DONE PROCESS: " + req.model.name + " ON " + name)
             } catch {
                 case e: Exception => println("AN ERROR OCCURRED: " + e.getMessage + e.printStackTrace())

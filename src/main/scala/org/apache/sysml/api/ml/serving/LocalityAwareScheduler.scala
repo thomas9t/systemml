@@ -33,10 +33,10 @@ object ExecutorQueueManager extends Runnable {
                             cacheQueues = _scheduler.executorTypes.map(x => _scheduler.globalCacheQueues.get(x))
 
                         // 3. If the model is local to an executor, then put it on the lowest utilizaiton queue
-                        val execLocal = _scheduler.modelLocality.get(m)
-                        var localQueue = Array[BatchQueue]()
-                        if (execLocal.nonEmpty)
-                            localQueue = Array[BatchQueue](execLocal.minBy(x => x.getExpectedExecutionTime))
+                        val localExecutionQueues = getLocalExecutionQueues(m)
+                        val localQueue = if (localExecutionQueues.nonEmpty)
+                            Array[BatchQueue](localExecutionQueues.minBy(x => x.getExpectedExecutionTime))
+                        else Array[BatchQueue]()
 
                         val queues = diskQueues ++ cacheQueues ++ localQueue
                         val nextRequest = _scheduler.modelQueues.get(m).peek()
@@ -58,6 +58,18 @@ object ExecutorQueueManager extends Runnable {
                 }
             }
         }
+
+    def getLocalExecutionQueues(model: String) : Array[BatchQueue] = {
+        val execs = _scheduler.modelManager.getModelLocality(model)
+        var queues = Array[BatchQueue]()
+        if (execs == null)
+            return queues
+
+        val iter = execs.iterator()
+        while (iter.hasNext)
+            queues :+= _scheduler.executorQueues.get(iter.next())
+        queues
+    }
 }
 
 object LocalityAwareScheduler extends BatchingScheduler {
@@ -66,7 +78,6 @@ object LocalityAwareScheduler extends BatchingScheduler {
 
     val globalCacheQueues = new ConcurrentHashMap[String, BatchQueue]()
     val globalDiskQueues = new ConcurrentHashMap[String, BatchQueue]()
-    val modelLocality = new ConcurrentHashMap[String, Set[BatchQueue]]()
 
     override def start(numCores: Int, cpuMemoryBudgetInBytes: Long, gpus: String): Unit = {
         super.start(numCores, cpuMemoryBudgetInBytes, gpus)
@@ -82,7 +93,6 @@ object LocalityAwareScheduler extends BatchingScheduler {
 
     override def addModel(model: Model): Unit = {
         super.addModel(model)
-        modelLocality.putIfAbsent(model.name, Set[BatchQueue]())
     }
 
     override def schedule(executor: JmlcExecutor) : Array[SchedulingRequest] = {

@@ -1,5 +1,7 @@
 package org.apache.sysml.api.ml.serving
 
+import java.util.concurrent.ConcurrentHashMap
+import java.util.HashSet
 import java.util.concurrent.atomic.LongAdder
 
 import org.apache.sysml.api.jmlc.{Connection, PreparedScript}
@@ -7,6 +9,8 @@ import org.apache.sysml.runtime.matrix.data.MatrixBlock
 import org.apache.sysml.utils.PersistentLRUCache
 
 trait ModelManager {
+
+    var modelLocality = new ConcurrentHashMap[String,HashSet[JmlcExecutor]]()
 
     val conn: Connection = new Connection()
 
@@ -56,6 +60,19 @@ trait ModelManager {
         }
     }
 
+    def setModelLocality(model: String, exec: JmlcExecutor) : Unit = {
+        modelLocality.putIfAbsent(model, new HashSet[JmlcExecutor]())
+        modelLocality.get(model).add(exec)
+    }
+
+    def unsetModelLocality(model: String, exec: JmlcExecutor) : Unit = {
+        modelLocality.get(model).remove(exec)
+    }
+
+    def getModelLocality(model: String) : HashSet[JmlcExecutor] = { modelLocality.get(model) }
+
+    def isModelLocal(model: String, exec: JmlcExecutor) : Boolean = { getModelLocality(model).contains(exec) }
+
     def disableCleanup() : Unit = { cleanupEnabled = false }
 
     def disableMemcheck() : Unit = { memCheckEnabled = false }
@@ -93,15 +110,12 @@ object ReferenceCountedModelManager extends ModelManager {
 
     def acquire(name: String, executor: JmlcExecutor) : PreparedScript = {
          println("ACQUIRING MODEL: " + name + " => " + modelRefCounts(name).longValue())
-        // the "has pinned vars" check is necessary because there may be separate prepared scripts
-        // compiled for various executor types (e.g. GPU/CPU)
-        // TODO: Better handling of the GPU pinned variables issue
 
         val ps = models(name).script(executor.getExecType)
-        /*if (modelRefCounts(name).longValue() > 0 && ps.hasPinnedVars) {
+        if (modelRefCounts(name).longValue() > 0) {
             modelRefCounts(name).increment()
             return ps.clone(false)
-        }*/
+        }
 
         // otherwise we need to re-pin the weights, possibly reading them from disk
         val model = models(name)
