@@ -216,8 +216,8 @@ object PredictionService extends PredictionJsonProtocol with AddModelJsonProtoco
         //scheduler = new BasicBatchingScheduler(timeout)
         //scheduler = new NonBatchingScheduler(timeout)
         val gpus = null
-        //val numCores = Runtime.getRuntime.availableProcessors() - 1
-        val numCores = 2
+        val numCores = Runtime.getRuntime.availableProcessors() - 1
+//        val numCores = 2
         val maxMemory = Runtime.getRuntime.maxMemory()  // total memory is just what the JVM has currently allocated
         println("TOTAL MEMORY: " + maxMemory)
         scheduler.start(numCores, maxMemory, gpus)
