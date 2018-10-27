@@ -531,13 +531,19 @@ public class GPUMemoryManager {
 	 * Clears up the memory used by non-dirty pointers.
 	 */
 	public void clearTemporaryMemory() {
-		// We cleanup non-dirty pointers, except those that are:
-		// 1. Locked by other instructions AND
-		// 2. Not marked for cleanup  by JMLC API.
+		// To record the cuda block sizes needed by allocatedGPUObjects, others are cleared up.
 		Set<Pointer> unlockedDirtyPointers = matrixMemoryManager.getPointers(false, true, false);
 		Set<Pointer> temporaryPointers = nonIn(allPointers.keySet(), unlockedDirtyPointers);
-		for(Pointer tmpPtr : temporaryPointers) {
+		for (Pointer tmpPtr : temporaryPointers) {
 			guardedCudaFree(tmpPtr);
+		}
+
+		// Also set the pointer(s) to null in the corresponding GPU objects to avoid double freeing pointers
+		Set<GPUObject> gObjs = matrixMemoryManager.getGpuObjects(temporaryPointers);
+		for (GPUObject g : gObjs) {
+			g.jcudaDenseMatrixPtr = null;
+			g.jcudaSparseMatrixPtr = null;
+			removeGPUObject(g);
 		}
 	}
 
