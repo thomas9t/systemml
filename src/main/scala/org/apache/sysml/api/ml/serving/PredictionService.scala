@@ -20,7 +20,6 @@ package org.apache.sysml.api.ml.serving
 
 import java.io.File
 
-import util.Properties
 import akka.http.scaladsl.server.StandardRoute
 import akka.http.scaladsl.server.Directives._
 import akka.http.scaladsl.model.StatusCodes
@@ -31,7 +30,6 @@ import org.apache.commons.cli.PosixParser
 import com.typesafe.config.ConfigFactory
 
 import scala.concurrent.duration._
-import scala.io.Source
 import java.util.HashMap
 
 import akka.http.scaladsl.marshallers.sprayjson.SprayJsonSupport
@@ -212,9 +210,9 @@ object PredictionService extends PredictionJsonProtocol with AddModelJsonProtoco
         var models = Map[String, Model]()
 
         // TODO: Set the scheduler using factory
-        scheduler = LocalityAwareScheduler
+//        scheduler = LocalityAwareScheduler
         //scheduler = new BasicBatchingScheduler(timeout)
-        //scheduler = new NonBatchingScheduler(timeout)
+        scheduler = new NonBatchingScheduler(timeout)
         val gpus = null
         val numCores = Runtime.getRuntime.availableProcessors() - 1
 //        val numCores = 2

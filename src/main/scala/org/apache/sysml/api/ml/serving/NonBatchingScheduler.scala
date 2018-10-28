@@ -28,14 +28,12 @@ class NonBatchingScheduler(override val timeout: Duration) extends Scheduler {
       * @return
       */
     override private[serving] def enqueue(request: PredictionRequest, model: Model): Future[PredictionResponse] = Future {
-        //println("RECEIVED REQUEST FOR: " + model.name + " => " + num)
         val statistics = if (_statistics) RequestStatistics() else null
         val schedulingRequest = SchedulingRequest(
             request, model, new CountDownLatch(1), System.nanoTime(), null, statistics)
-        statistics.queueSize = requestQueue.size()
+        if (_statistics) statistics.queueSize = requestQueue.size()
         requestQueue.add(schedulingRequest)
         counter += 1
-        //println("ENQUEUED REQUEST FOR: " + model.name + " => " + num)
         try {
             schedulingRequest.latch.await(timeout.length, timeout.unit)
             schedulingRequest.response
