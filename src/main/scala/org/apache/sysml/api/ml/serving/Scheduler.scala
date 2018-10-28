@@ -43,7 +43,6 @@ trait Scheduler {
     implicit val ec : ExecutionContext = ExecutionContext.fromExecutor(Executors.newFixedThreadPool(2000))
     var executorTypes = Array[String]()
     var modelManager = ReferenceCountedModelManager
-    modelManager.disableCleanup()
     val requestsProcessed = new ConcurrentHashMap[String,LongAdder]()
 
     def start(numCores: Int, cpuMemoryBudgetInBytes: Long, gpus: String): Unit = {
