@@ -65,9 +65,8 @@ object ExecutorQueueManager extends Runnable {
         if (execs == null)
             return queues
 
-        val iter = execs.iterator()
-        while (iter.hasNext)
-            queues :+= _scheduler.executorQueues.get(iter.next())
+        for (ix <- 0 until execs.size())
+            queues :+= _scheduler.executorQueues.get(execs.get(ix))
         queues
     }
 }

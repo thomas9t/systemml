@@ -1,5 +1,6 @@
 package org.apache.sysml.api.ml.serving
 
+import java.util
 import java.util.concurrent.ConcurrentHashMap
 import java.util.HashSet
 import java.util.concurrent.atomic.LongAdder
@@ -10,7 +11,7 @@ import org.apache.sysml.utils.PersistentLRUCache
 
 trait ModelManager {
 
-    var modelLocality = new ConcurrentHashMap[String,HashSet[JmlcExecutor]]()
+    var modelLocality = new ConcurrentHashMap[String, util.ArrayList[JmlcExecutor]]()
 
     val conn: Connection = new Connection()
 
@@ -61,7 +62,7 @@ trait ModelManager {
     }
 
     def setModelLocality(model: String, exec: JmlcExecutor) : Unit = {
-        modelLocality.putIfAbsent(model, new HashSet[JmlcExecutor]())
+        modelLocality.putIfAbsent(model, new util.ArrayList[JmlcExecutor]())
         modelLocality.get(model).add(exec)
     }
 
@@ -69,7 +70,7 @@ trait ModelManager {
         modelLocality.get(model).remove(exec)
     }
 
-    def getModelLocality(model: String) : HashSet[JmlcExecutor] = { modelLocality.get(model) }
+    def getModelLocality(model: String) : util.ArrayList[JmlcExecutor] = { modelLocality.get(model) }
 
     def isModelLocal(model: String, exec: JmlcExecutor) : Boolean = { getModelLocality(model).contains(exec) }
 
