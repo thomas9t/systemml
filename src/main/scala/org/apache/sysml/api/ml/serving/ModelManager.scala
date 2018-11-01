@@ -1,5 +1,6 @@
 package org.apache.sysml.api.ml.serving
 
+import java.util
 import java.util.concurrent.ConcurrentHashMap
 import java.util.HashSet
 import java.util.concurrent.atomic.LongAdder
@@ -10,7 +11,7 @@ import org.apache.sysml.utils.PersistentLRUCache
 
 trait ModelManager {
 
-    var modelLocality = new ConcurrentHashMap[String,HashSet[JmlcExecutor]]()
+    var modelLocality = new ConcurrentHashMap[String, HashSet[JmlcExecutor]]()
 
     val conn: Connection = new Connection()
 
