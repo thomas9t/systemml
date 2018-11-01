@@ -43,6 +43,8 @@ class BatchQueue(execType: String, name: String) extends PriorityBlockingQueue[B
     def getPrevRequest(name: String) : SchedulingRequest = { prevFirstRequest.getOrElse(name, null) }
 
     def enqueue(batch: Batch) : Unit = {
+        if (PredictionService.__DEBUG__)
+            println("ENQUEUING ONTO: " + getName)
         synchronized {
             this.add(batch)
             expectedExecutionTime.add(batch.expectedTime)
@@ -51,7 +53,7 @@ class BatchQueue(execType: String, name: String) extends PriorityBlockingQueue[B
 
     def dequeue() : Batch = {
         if (this.isEmpty)
-            return Batch(-1, -1, -1, null)
+            return Batch(-1, -1, -1, "NO NAME")
         synchronized {
             val nextBatch = this.poll()
             expectedExecutionTime.add(-1*nextBatch.expectedTime)

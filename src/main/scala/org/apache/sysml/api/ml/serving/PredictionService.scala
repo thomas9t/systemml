@@ -213,12 +213,12 @@ object PredictionService extends PredictionJsonProtocol with AddModelJsonProtoco
         var models = Map[String, Model]()
 
         // TODO: Set the scheduler using factory
-//        scheduler = LocalityAwareScheduler
+        scheduler = LocalityAwareScheduler
         //scheduler = new BasicBatchingScheduler(timeout)
-        scheduler = new NonBatchingScheduler(timeout)
+//        scheduler = new NonBatchingScheduler(timeout)
         val gpus = null
         val numCores = Runtime.getRuntime.availableProcessors() - 1
-//        val numCores = 2
+//        val numCores = 1
         val maxMemory = Runtime.getRuntime.maxMemory()  // total memory is just what the JVM has currently allocated
         println("TOTAL MEMORY: " + maxMemory)
         scheduler.start(numCores, maxMemory, gpus)

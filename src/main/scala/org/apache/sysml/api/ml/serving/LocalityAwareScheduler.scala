@@ -105,20 +105,23 @@ object LocalityAwareScheduler extends BatchingScheduler {
         val localQueue = executorQueues.get(executor)
         val globalDiskQueue = globalDiskQueues.get(executor.getExecType)
         val globalMemQueue = globalCacheQueues.get(executor.getExecType)
-        if (localQueue.size() > 0 || globalDiskQueue.size() > 0) {
+        if (localQueue.size() > 0 || globalDiskQueue.size() > 0 || globalMemQueue.size() > 0) {
             dummyResponse.synchronized {
-                if (localQueue.size() > 0 || globalDiskQueue.size() > 0) {
-                    val execMode = Array[(Long, ExecMode.MODE)](
-                        (localQueue.getExpectedExecutionTime, ExecMode.LOCAL),
-                        (globalDiskQueue.getExpectedExecutionTime, ExecMode.GLOBAL_DISK),
-                        (globalMemQueue.getExpectedExecutionTime, ExecMode.GLOBAL_MEM)
-                    ).minBy(x => x._2)._2
+                if (localQueue.size() > 0 || globalDiskQueue.size() > 0 || globalMemQueue.size() > 0) {
+                    if (PredictionService.__DEBUG__)
+                        println("BEGIN SCHEDULING FOR: " + executor.getName)
+                    val execMode = Array[(BatchQueue, ExecMode.MODE)](
+                        (localQueue, ExecMode.LOCAL),
+                        (globalDiskQueue, ExecMode.GLOBAL_DISK),
+                        (globalMemQueue, ExecMode.GLOBAL_MEM)
+                    ).filter(x => x._1.size() > 0).maxBy(x => x._1.getExpectedExecutionTime)._2
 
                     val batch = execMode match {
                         case ExecMode.LOCAL => localQueue.peek()
                         case ExecMode.GLOBAL_MEM => globalMemQueue.peek()
                         case ExecMode.GLOBAL_DISK => globalDiskQueue.peek()
                     }
+                    assert(batch != null, "Something is wrong. Batch should not be null!")
 
                     // now we need to ask the resource manager if there's enough memory to execute the batch
                     val model = modelManager.get(batch.modelName)
@@ -127,7 +130,15 @@ object LocalityAwareScheduler extends BatchingScheduler {
                     // submit them for processing
                     val mqueue = modelQueues.get(batch.modelName)
                     val numToDequeue = min(batch.size, mqueue.size())
-                    if (numToDequeue > 0) {
+
+                    // if this value is zero there are no more requests and the batch is stale
+                    if (numToDequeue == 0) {
+                        execMode match {
+                            case ExecMode.LOCAL => localQueue.poll()
+                            case ExecMode.GLOBAL_DISK => globalDiskQueue.poll()
+                            case ExecMode.GLOBAL_MEM => globalMemQueue.poll()
+                        }
+                    } else {
                         val memReceived = modelManager.tryAllocMem(model.name, batch.size)
                         if (memReceived < 0) {
                             return ret
