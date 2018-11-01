@@ -9,7 +9,8 @@ import scala.concurrent.duration.Duration
 class NonBatchingScheduler(override val timeout: Duration) extends Scheduler {
 
     override def start(numCores: Int, cpuMemoryBudgetInBytes: Long, gpus: String): Unit = {
-        println("STARTING NON BATCHING SCHEDULER")
+        if (PredictionService.__DEBUG__)
+            println("STARTING NON BATCHING SCHEDULER")
         super.start(numCores, cpuMemoryBudgetInBytes, gpus)
     }
 

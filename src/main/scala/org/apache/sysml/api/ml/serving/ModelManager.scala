@@ -25,7 +25,7 @@ trait ModelManager {
     var models: Map[String, Model] = Map()
 
     def setAvailableMemory(memBytes: Long) : Unit = {
-        println("SETTING TOTAL MEMORY AVAILABLE TO: " + memBytes)
+        if (PredictionService.__DEBUG__) println("SETTING TOTAL MEMORY AVAILABLE TO: " + memBytes)
         totalMemory = memBytes
         availableMemory.reset()
         availableMemory.add(memBytes)
@@ -42,7 +42,7 @@ trait ModelManager {
         if (bytes <= availableMemory.longValue()) {
             this.synchronized {
                 if (bytes <= availableMemory.longValue()) {
-                    println("GRANTED: " + bytes + "/" + availableMemory)
+                    if (PredictionService.__DEBUG__) println("GRANTED: " + bytes + "/" + availableMemory)
                     availableMemory.add(-1 * bytes)
                     return bytes
                 }
@@ -54,9 +54,9 @@ trait ModelManager {
 
     def releaseMemory(bytes: Long) : Unit = {
         if (bytes > 0) {
-            println("RELEASING: " + bytes)
+            if (PredictionService.__DEBUG__) println("RELEASING: " + bytes)
             availableMemory.add(bytes)
-            println("MEMORY IS NOW: " + availableMemory.longValue())
+            if (PredictionService.__DEBUG__) println("MEMORY IS NOW: " + availableMemory.longValue())
         }
     }
 
@@ -109,7 +109,7 @@ object ReferenceCountedModelManager extends ModelManager {
     def isCached(name: String) : Boolean = { modelRefCounts(name).longValue() > 0 }
 
     def acquire(name: String, executor: JmlcExecutor) : PreparedScript = {
-         println("ACQUIRING MODEL: " + name + " => " + modelRefCounts(name).longValue())
+         if (PredictionService.__DEBUG__) println("ACQUIRING MODEL: " + name + " => " + modelRefCounts(name).longValue())
 
         val ps = models(name).script(executor.getExecType)
         if (modelRefCounts(name).longValue() > 0) {
@@ -121,30 +121,30 @@ object ReferenceCountedModelManager extends ModelManager {
         val model = models(name)
         model.synchronized {
             if (!ps.hasPinnedVars) {
-                println("PINNING WEIGHTS")
+                if (PredictionService.__DEBUG__) println("PINNING WEIGHTS")
                 model.weightFiles.foreach(x => ps.setMatrix(x._1, weightCache.getAsMatrixBlock(x._2), true))
             }
             modelRefCounts(name).increment()
         }
-        println("DONE ACQUIRING MODEL: " + name)
+        if (PredictionService.__DEBUG__) println("DONE ACQUIRING MODEL: " + name)
         ps.clone(false)
     }
 
     override def disableCleanup(): Unit = {
         super.disableCleanup()
-        println("CLEANUP IS DISABLED")
+        if (PredictionService.__DEBUG__) println("CLEANUP IS DISABLED")
     }
 
     def release(name: String) : Unit = {
         modelRefCounts(name).decrement()
 
-        println("RELEASE MODEL: " + name + " => " + modelRefCounts(name).longValue())
+        if (PredictionService.__DEBUG__) println("RELEASE MODEL: " + name + " => " + modelRefCounts(name).longValue())
         if (modelRefCounts(name).longValue() == 0) {
             models(name).synchronized {
                 if (modelRefCounts(name).longValue() == 0) {
-                    println("ACTUALLY RELEASING THE MODEL")
+                    if (PredictionService.__DEBUG__) println("ACTUALLY RELEASING THE MODEL")
                     models(name).script.foreach { x => x._2.clearPinnedData() }
-                    println("CALLING RELEASE MEMORY")
+                    if (PredictionService.__DEBUG__) println("CALLING RELEASE MEMORY")
                     releaseMemory(models(name).weightMem)
                 }
             }

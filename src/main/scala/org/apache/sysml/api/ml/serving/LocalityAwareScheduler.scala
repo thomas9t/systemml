@@ -1,7 +1,6 @@
 package org.apache.sysml.api.ml.serving
 
 import java.util.concurrent.{ConcurrentHashMap, CountDownLatch}
-import java.util.concurrent.atomic.LongAdder
 
 import scala.concurrent.Future
 import scala.math.min
@@ -9,13 +8,11 @@ import scala.concurrent.duration.Duration
 
 object ExecutorQueueManager extends Runnable {
     var _shutDown = false
-
     var _scheduler = LocalityAwareScheduler
-
     def shutdown(): Unit = { _shutDown = true }
 
     override def run() : Unit = {
-        println("Hi From Executor Queue Manager!")
+        if (PredictionService.__DEBUG__) println("Hi From Executor Queue Manager!")
         while (!_shutDown) {
             _scheduler.dummyResponse.synchronized {
                 val schedulableModels = _scheduler.executorTypes.map(
@@ -45,12 +42,15 @@ object ExecutorQueueManager extends Runnable {
                             if (nextRequest ne queue.getPrevRequest(m)) {
                                 val nextBatchSize = min(qsize, _scheduler.getOptimalBatchSize(m, queue.getExecType))
                                 assert(nextBatchSize > 0, "Something is wrong - batch size should not be zero")
-                                println("ENQUEUING: " + nextBatchSize + " FOR: " + m + " ONTO: " + queue.getName)
+                                if (PredictionService.__DEBUG__)
+                                    println("ENQUEUING: " + nextBatchSize + " FOR: " + m + " ONTO: " + queue.getName)
                                 val nextBatch = Batch(
-                                    nextBatchSize, _scheduler.getExpectedExecutionTime(m, nextBatchSize, queue.getExecType),
+                                    nextBatchSize, _scheduler.getExpectedExecutionTime(
+                                        m, nextBatchSize, queue.getExecType),
                                     nextRequest.receivedTime - System.nanoTime(), nextRequest.model.name)
                                 queue.enqueue(nextBatch)
-                                println("DONE WITH ENQUEUING")
+                                if (PredictionService.__DEBUG__)
+                                    println("DONE WITH ENQUEUING")
                             }
                             queue.updatePrevRequest(m, nextRequest) } )
                         }
@@ -70,6 +70,11 @@ object ExecutorQueueManager extends Runnable {
             queues :+= _scheduler.executorQueues.get(iter.next())
         queues
     }
+}
+
+object ExecMode extends Enumeration {
+    type MODE = Value
+    val LOCAL, GLOBAL_MEM, GLOBAL_DISK = Value
 }
 
 object LocalityAwareScheduler extends BatchingScheduler {
@@ -99,14 +104,21 @@ object LocalityAwareScheduler extends BatchingScheduler {
         var ret = Array[SchedulingRequest]()
         val localQueue = executorQueues.get(executor)
         val globalDiskQueue = globalDiskQueues.get(executor.getExecType)
+        val globalMemQueue = globalCacheQueues.get(executor.getExecType)
         if (localQueue.size() > 0 || globalDiskQueue.size() > 0) {
             dummyResponse.synchronized {
                 if (localQueue.size() > 0 || globalDiskQueue.size() > 0) {
-                    val localExecTime = localQueue.getExpectedExecutionTime
-                    val globalExecTime = globalDiskQueue.getExpectedExecutionTime
-                    val isLocalMode = (
-                      (localExecTime >= globalExecTime) && (localQueue.size() > 0)) || (globalDiskQueue.size() == 0)
-                    val batch = if (isLocalMode) localQueue.peek() else globalDiskQueue.peek()
+                    val execMode = Array[(Long, ExecMode.MODE)](
+                        (localQueue.getExpectedExecutionTime, ExecMode.LOCAL),
+                        (globalDiskQueue.getExpectedExecutionTime, ExecMode.GLOBAL_DISK),
+                        (globalMemQueue.getExpectedExecutionTime, ExecMode.GLOBAL_MEM)
+                    ).minBy(x => x._2)._2
+
+                    val batch = execMode match {
+                        case ExecMode.LOCAL => localQueue.peek()
+                        case ExecMode.GLOBAL_MEM => globalMemQueue.peek()
+                        case ExecMode.GLOBAL_DISK => globalDiskQueue.peek()
+                    }
 
                     // now we need to ask the resource manager if there's enough memory to execute the batch
                     val model = modelManager.get(batch.modelName)
@@ -122,19 +134,30 @@ object LocalityAwareScheduler extends BatchingScheduler {
                         }
 
                         // now we need to actually remove the request from the queue since it's going to be processed
-                        if (isLocalMode) localQueue.poll() else globalDiskQueue.poll()
+                        execMode match {
+                            case ExecMode.LOCAL => localQueue.poll()
+                            case ExecMode.GLOBAL_DISK => globalDiskQueue.poll()
+                            case ExecMode.GLOBAL_MEM => globalMemQueue.poll()
+                        }
 
                         // now we can actually take the original requests out of the model queues
-                        println("SCHEDULING: " + numToDequeue + " FOR " + batch.modelName + " ON " + executor.getName)
+                        if (PredictionService.__DEBUG__)
+                            println("SCHEDULING: " + numToDequeue + " FOR " + batch.modelName + " ON " + executor.getName)
                         for (_ <- 0 until numToDequeue) {
                             val nextRequest = mqueue.poll()
                             assert(nextRequest != null, "Something is wrong - request should not be null!")
 
                             nextRequest.memUse = memReceived
-                            nextRequest.statistics.execLocal = if (isLocalMode) 1 else 0
+                            nextRequest.statistics.execMode = execMode match {
+                                case ExecMode.LOCAL => 0
+                                case ExecMode.GLOBAL_MEM => 1
+                                case ExecMode.GLOBAL_DISK => 2
+                                case _ => -1
+                            }
                             ret :+= nextRequest
                         }
-                        println("DONE SCHEDULING")
+                        if (PredictionService.__DEBUG__)
+                            println("DONE SCHEDULING")
                     }
                 }
             }

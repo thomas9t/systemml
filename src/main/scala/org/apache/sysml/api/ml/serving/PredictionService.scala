@@ -60,7 +60,7 @@ case class RequestStatistics(var batchSize: Int = -1,
                              var unbatchingTime: Long = -1,
                              var queueWaitTime: Long = -1,
                              var queueSize: Int = -1,
-                             var execLocal: Int = 0)
+                             var execMode: Int = 0)
 case class PredictionRequestExternal(name: String, data: Array[Double], rows: Int, cols: Int)
 case class PredictionResponseExternal(response: Array[Double], rows: Int, cols: Int, statistics: RequestStatistics)
 
@@ -144,7 +144,10 @@ curl -XPOST -H "Content-Type:application/json" -d '{ "inputs":"1,2,3", "format":
 curl -u admin -XGET localhost:9000/shutdown
 
  */
+
 object PredictionService extends PredictionJsonProtocol with AddModelJsonProtocol {
+    val __DEBUG__ = true
+
     // val LOG = LogFactory.getLog(classOf[PredictionService].getName())
     val customConf = ConfigFactory.parseString("""
         akka.http.server.idle-timeout=infinite

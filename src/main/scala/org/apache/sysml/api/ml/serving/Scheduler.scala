@@ -62,7 +62,7 @@ trait Scheduler {
         if (numGpus > 0)
             executorTypes :+= "GPU"
 
-        println("STARTING SCHEDULER WITH: " + numCores + " CPU => " + numGpus + " GPUS")
+        if (PredictionService.__DEBUG__) println("STARTING SCHEDULER WITH: " + numCores + " CPU => " + numGpus + " GPUS")
         for (i <- 0 until numCores) {
             val exec = new JmlcExecutor(this, "CPU", "CPU" + i, null)
             executorQueues.put(exec, new BatchQueue("CPU", "CPU" + i))

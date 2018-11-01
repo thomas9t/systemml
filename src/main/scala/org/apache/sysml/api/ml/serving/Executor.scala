@@ -99,18 +99,21 @@ class JmlcExecutor(scheduler: Scheduler, execType: String, name: String, gCtx: G
                 val batchedMatrixData = BatchingUtils.batchRequests(requests)
                 val batchingTime = System.nanoTime() - start
                 val req = requests(0)
-                println("BEGIN PROCESS: " + req.model.name + " ON " + name)
+                if (PredictionService.__DEBUG__)
+                    println("BEGIN PROCESS: " + req.model.name + " ON " + name)
                 val modelAcquireStart = System.nanoTime()
                 val script = scheduler.modelManager.acquire(req.model.name, this)
                 val modelAcquireTime = System.nanoTime() - modelAcquireStart
                 script.setMatrix(req.model.inputVarName, batchedMatrixData, false)
                 if (gCtx != null)
                     script.setGpuContext(gCtx)
-                println("BEGIN EXEC: " + req.model.name + " ON " + name)
+                if (PredictionService.__DEBUG__)
+                    println("BEGIN EXEC: " + req.model.name + " ON " + name)
                 val execStart = System.nanoTime()
                 val res = script.executeScript().getMatrixBlock(req.model.outputVarName)
                 val execTime = System.nanoTime() - execStart
-                println("DONE EXEC: " + req.model.name + " ON " + name)
+                if (PredictionService.__DEBUG__)
+                    println("DONE EXEC: " + req.model.name + " ON " + name)
                 responses = BatchingUtils.unbatchRequests(requests, res)
                 val stop = System.nanoTime()
                 val modelReleaseStart = System.nanoTime()
@@ -125,7 +128,8 @@ class JmlcExecutor(scheduler: Scheduler, execType: String, name: String, gCtx: G
                 scheduler.modelManager.setModelLocality(req.model.name, this)
                 prevModel = req.model.name
 
-                println("DONE PROCESS: " + req.model.name + " ON " + name)
+                if (PredictionService.__DEBUG__)
+                    println("DONE PROCESS: " + req.model.name + " ON " + name)
             } catch {
                 case e: Exception => println("AN ERROR OCCURRED: " + e.getMessage + e.printStackTrace())
             }
