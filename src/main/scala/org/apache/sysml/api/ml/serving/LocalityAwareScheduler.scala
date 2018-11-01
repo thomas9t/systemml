@@ -65,11 +65,11 @@ object ExecutorQueueManager extends Runnable {
         if (execs == null)
             return queues
 
-        synchronized {
+        this._scheduler.modelManager.synchronized ({
             val iter = execs.iterator()
             while (iter.hasNext)
                 queues :+= _scheduler.executorQueues.get(iter.next())
-        }
+        })
         queues
     }
 }

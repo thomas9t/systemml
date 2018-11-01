@@ -67,7 +67,7 @@ trait ModelManager {
     }
 
     def unsetModelLocality(model: String, exec: JmlcExecutor) : Unit = {
-        modelLocality.get(model).remove(exec)
+        this.synchronized({modelLocality.get(model).remove(exec)})
     }
 
     def getModelLocality(model: String) : HashSet[JmlcExecutor] = { modelLocality.get(model) }
