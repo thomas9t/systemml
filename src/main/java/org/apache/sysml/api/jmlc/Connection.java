@@ -63,6 +63,8 @@ import org.apache.sysml.runtime.util.DataConverter;
 import org.apache.sysml.utils.Explain;
 import org.apache.wink.json4j.JSONObject;
 
+import javax.security.auth.login.Configuration;
+
 /**
  * Interaction with SystemML using the JMLC (Java Machine Learning Connector) API is initiated with
  * a {@link Connection} object. The JMLC API is patterned
@@ -947,5 +949,6 @@ public class Connection implements Closeable
 		//set thread-local configurations for compilation and read
 		ConfigurationManager.setLocalConfig(_dmlconf);
 		ConfigurationManager.setLocalConfig(_cconf);
+		DMLScript.setGlobalFlags(_dmlconf);
 	}
 }
