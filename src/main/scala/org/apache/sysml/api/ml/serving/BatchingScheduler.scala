@@ -56,11 +56,6 @@ trait BatchingScheduler extends Scheduler {
             }
         }
 
-//        var shortFuseArray = Set[String]()
-//        if (shortFuse.nonEmpty) {
-//            shortFuseArray += shortFuse.minBy(x => x._2)._1
-//        }
-
         if (shortFuse.nonEmpty) shortFuse else batchableModels
     }
 

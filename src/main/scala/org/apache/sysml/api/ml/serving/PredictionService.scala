@@ -60,7 +60,8 @@ case class RequestStatistics(var batchSize: Int = -1,
                              var unbatchingTime: Long = -1,
                              var queueWaitTime: Long = -1,
                              var queueSize: Int = -1,
-                             var execMode: Int = 0)
+                             var execMode: Int = 0,
+                             var preprocWaitTime: Long = -1)
 case class PredictionRequestExternal(name: String, data: Array[Double], rows: Int, cols: Int)
 case class PredictionResponseExternal(response: Array[Double], rows: Int, cols: Int, statistics: RequestStatistics)
 
@@ -76,12 +77,12 @@ case class Model(name: String,
                  weightFiles: Map[String, String],
                  coeffs: (Double, Double),
                  weightMem: Long)
-case class PredictionRequest(data : MatrixBlock, modelName : String, requestSize : Int)
+case class PredictionRequest(data : MatrixBlock, modelName : String, requestSize : Int, receivedTime : Long)
 case class PredictionResponse(response: MatrixBlock, batchSize: Int, statistics: RequestStatistics)
 case class MatrixBlockContainer(numRows: Long, numCols: Long, nnz: Long, sum: Double, data: MatrixBlock)
 
 trait PredictionJsonProtocol extends SprayJsonSupport with DefaultJsonProtocol {
-    implicit val RequestStatisticsFormat = jsonFormat12(RequestStatistics)
+    implicit val RequestStatisticsFormat = jsonFormat13(RequestStatistics)
     implicit val predictionRequestExternalFormat = jsonFormat4(PredictionRequestExternal)
     implicit val predictionResponseExternalFormat = jsonFormat4(PredictionResponseExternal)
 }
@@ -177,13 +178,16 @@ object PredictionService extends PredictionJsonProtocol with AddModelJsonProtoco
         val helpOption = new org.apache.commons.cli.Option("help", false, "Show usage message")
         val maxSizeOption = new org.apache.commons.cli.Option("max_bytes", true, "Maximum size of request in bytes")
         val statisticsOption = new org.apache.commons.cli.Option("statistics", true, "Gather statistics on request execution")
+        val numCpuOption = new org.apache.commons.cli.Option("num_cpus", true, "How many CPUs should be allocated to the prediction service. Default nproc-1")
+        val gpusOption = new org.apache.commons.cli.Option("gpus", true, "GPUs available to this process. Default: 0")
 
         // Only port is required option
         portOption.setRequired(true)
 
         return new org.apache.commons.cli.Options()
           .addOption(hostOption).addOption(portOption).addOption(numRequestOption)
-          .addOption(passwdOption).addOption(timeoutOption).addOption(helpOption).addOption(maxSizeOption)
+          .addOption(passwdOption).addOption(timeoutOption).addOption(helpOption)
+          .addOption(maxSizeOption).addOption(statisticsOption).addOption(numCpuOption).addOption(gpusOption)
     }
 
     def main(args: Array[String]): Unit = {
@@ -202,6 +206,9 @@ object PredictionService extends PredictionJsonProtocol with AddModelJsonProtoco
             Duration(line.getOptionValue("timeout").toLong, MILLISECONDS) else 300.seconds
         val sizeDirective = if (line.hasOption("max_bytes"))
             withSizeLimit(line.getOptionValue("max_bytes").toLong) else withoutSizeLimit
+        val numCores = if (line.hasOption("num_cpus"))
+            line.getOptionValue("num_cpus").toInt else Runtime.getRuntime.availableProcessors() - 1
+        val gpus = if (line.hasOption("gpus")) line.getOptionValue("gpus") else null
 
         // Initialize statistics counters
         val numTimeouts = new LongAdder
@@ -215,10 +222,7 @@ object PredictionService extends PredictionJsonProtocol with AddModelJsonProtoco
         // TODO: Set the scheduler using factory
         scheduler = LocalityAwareScheduler
         //scheduler = new BasicBatchingScheduler(timeout)
-//        scheduler = new NonBatchingScheduler(timeout)
-        val gpus = null
-        val numCores = Runtime.getRuntime.availableProcessors() - 1
-//        val numCores = 1
+        //scheduler = new NonBatchingScheduler(timeout)
         val maxMemory = Runtime.getRuntime.maxMemory()  // total memory is just what the JVM has currently allocated
         println("TOTAL MEMORY: " + maxMemory)
         scheduler.start(numCores, maxMemory, gpus)
@@ -344,8 +348,8 @@ object PredictionService extends PredictionJsonProtocol with AddModelJsonProtoco
             },
             line.getOptionValue("ip", "localhost"), line.getOptionValue("port").toInt)
 
-        println(s"Prediction Server online.\nPress RETURN to stop...")
-        scala.io.StdIn.readLine()
+        println(s"Prediction Server online.")
+        while (true) Thread.sleep(100)
         bindingFuture
           .flatMap(_.unbind())
           .onComplete(_ ⇒ system.terminate())
@@ -354,7 +358,6 @@ object PredictionService extends PredictionJsonProtocol with AddModelJsonProtoco
     def processPredictionResponse(response : PredictionResponse, 
                                   format : String, 
                                   deserializationTime: Long) : PredictionResponseExternal = {
-        // TODO: Implement other output types...
         if (response != null) {
             val start = System.nanoTime()
             val dataArray = response.response.getDenseBlockValues
@@ -428,7 +431,7 @@ object PredictionService extends PredictionJsonProtocol with AddModelJsonProtoco
     def processPredictionRequest(request : PredictionRequestExternal) : PredictionRequest = {
         val mat = new MatrixBlock(request.rows, request.cols, false)
         mat.init(request.data, request.rows, request.cols)
-        PredictionRequest(mat, request.name, request.rows)
+        PredictionRequest(mat, request.name, request.rows, System.nanoTime())
     }
 
     def processMatrixInput(data : String, rows : Int, cols : Int, format : String) : MatrixBlock = {
