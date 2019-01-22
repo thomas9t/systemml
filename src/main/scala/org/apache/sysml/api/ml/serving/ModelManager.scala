@@ -141,8 +141,7 @@ object ReferenceCountedModelManager extends ModelManager {
     def release(name: String) : Unit = {
         modelRefCounts(name).decrement()
         releaseMemory(models(name).weightMem)
-        if (!this.cleanupEnabled)
-            return
+        System.err.println("AARDVAARK")
 
 //        if (PredictionService.__DEBUG__) println("RELEASE MODEL: " + name + " => " + modelRefCounts(name).longValue())
 //        if (modelRefCounts(name).longValue() == 0) {
