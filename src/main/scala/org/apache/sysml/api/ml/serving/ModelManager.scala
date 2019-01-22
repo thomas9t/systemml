@@ -140,6 +140,9 @@ object ReferenceCountedModelManager extends ModelManager {
 
     def release(name: String) : Unit = {
         modelRefCounts(name).decrement()
+        releaseMemory(models(name).weightMem)
+        if (!this.cleanupEnabled)
+            return
 
         if (PredictionService.__DEBUG__) println("RELEASE MODEL: " + name + " => " + modelRefCounts(name).longValue())
         if (modelRefCounts(name).longValue() == 0) {
@@ -148,7 +151,6 @@ object ReferenceCountedModelManager extends ModelManager {
                     if (PredictionService.__DEBUG__) println("ACTUALLY RELEASING THE MODEL")
                     models(name).script.foreach { x => x._2.clearPinnedData() }
                     if (PredictionService.__DEBUG__) println("CALLING RELEASE MEMORY")
-                    releaseMemory(models(name).weightMem)
                 }
             }
         }

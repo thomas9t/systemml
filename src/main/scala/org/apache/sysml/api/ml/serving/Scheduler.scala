@@ -43,6 +43,7 @@ trait Scheduler {
     implicit val ec : ExecutionContext = ExecutionContext.fromExecutor(Executors.newFixedThreadPool(2000))
     var executorTypes = Array[String]()
     var modelManager = ReferenceCountedModelManager
+    modelManager.disableCleanup()
 
     def start(numCores: Int, cpuMemoryBudgetInBytes: Long, gpus: String): Unit = {
         var numGpus = 0
