@@ -485,6 +485,9 @@ public class PreparedScript implements ConfigurableAPI
 		//add reused variables
 		_vars.putAll(_inVarReuse);
 
+		for (String v : _vars.keySet())
+			System.err.println("VAR: " + v);
+
 		// clear prior thread local configurations (left over from previous run)
 		ConfigurationManager.clearLocalConfigs();
 		ConfigurationManager.resetStatistics();
