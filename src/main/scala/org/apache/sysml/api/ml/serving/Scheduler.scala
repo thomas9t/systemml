@@ -45,6 +45,7 @@ trait Scheduler {
     var modelManager = ReferenceCountedModelManager
 
     def start(numCores: Int, cpuMemoryBudgetInBytes: Long, gpus: String): Unit = {
+        System.err.println(s"Starting Scheduler with ${numCores} CPUs and ${gpus} GPUs")
         var numGpus = 0
         var gCtxs: List[GPUContext] = null
         if (gpus != null) {

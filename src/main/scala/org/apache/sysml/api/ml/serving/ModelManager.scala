@@ -142,16 +142,16 @@ object ReferenceCountedModelManager extends ModelManager {
         modelRefCounts(name).decrement()
         releaseMemory(models(name).weightMem)
 
-//        if (PredictionService.__DEBUG__) println("RELEASE MODEL: " + name + " => " + modelRefCounts(name).longValue())
-//        if (modelRefCounts(name).longValue() == 0) {
-//            models(name).synchronized {
-//                if (modelRefCounts(name).longValue() == 0) {
-//                    if (PredictionService.__DEBUG__) println("ACTUALLY RELEASING THE MODEL")
-//                    models(name).script.foreach { x => x._2.clearPinnedData() }
-//                    if (PredictionService.__DEBUG__) println("CALLING RELEASE MEMORY")
-//                }
-//            }
-//        }
+        if (PredictionService.__DEBUG__) println("RELEASE MODEL: " + name + " => " + modelRefCounts(name).longValue())
+        if (modelRefCounts(name).longValue() == 0) {
+            models(name).synchronized {
+                if (modelRefCounts(name).longValue() == 0) {
+                    if (PredictionService.__DEBUG__) println("ACTUALLY RELEASING THE MODEL")
+                    models(name).script.foreach { x => x._2.clearPinnedData() }
+                    if (PredictionService.__DEBUG__) println("CALLING RELEASE MEMORY")
+                }
+            }
+        }
     }
 
     def put(model: Model) : Unit = {
