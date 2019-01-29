@@ -180,6 +180,7 @@ object PredictionService extends PredictionJsonProtocol with AddModelJsonProtoco
         val statisticsOption = new org.apache.commons.cli.Option("statistics", true, "Gather statistics on request execution")
         val numCpuOption = new org.apache.commons.cli.Option("num_cpus", true, "How many CPUs should be allocated to the prediction service. Default nproc-1")
         val gpusOption = new org.apache.commons.cli.Option("gpus", true, "GPUs available to this process. Default: 0")
+        val schedulerOption = new org.apache.commons.cli.Option("scheduler", true, "Scheduler implementation to use. Default: locality-aware")
 
         // Only port is required option
         portOption.setRequired(true)
@@ -187,7 +188,8 @@ object PredictionService extends PredictionJsonProtocol with AddModelJsonProtoco
         return new org.apache.commons.cli.Options()
           .addOption(hostOption).addOption(portOption).addOption(numRequestOption)
           .addOption(passwdOption).addOption(timeoutOption).addOption(helpOption)
-          .addOption(maxSizeOption).addOption(statisticsOption).addOption(numCpuOption).addOption(gpusOption)
+          .addOption(maxSizeOption).addOption(statisticsOption).addOption(numCpuOption)
+          .addOption(gpusOption).addOption(schedulerOption)
     }
 
     def main(args: Array[String]): Unit = {
@@ -209,6 +211,7 @@ object PredictionService extends PredictionJsonProtocol with AddModelJsonProtoco
         val numCores = if (line.hasOption("num_cpus"))
             line.getOptionValue("num_cpus").toInt else Runtime.getRuntime.availableProcessors() - 1
         val gpus = if (line.hasOption("gpus")) line.getOptionValue("gpus") else null
+        val schedulerType = line.getOptionValue("scheduler", "locality-aware")
 
         // Initialize statistics counters
         val numTimeouts = new LongAdder
@@ -220,10 +223,9 @@ object PredictionService extends PredictionJsonProtocol with AddModelJsonProtoco
         var models = Map[String, Model]()
 
         // TODO: Set the scheduler using factory
-        scheduler = LocalityAwareScheduler
-        //scheduler = new BasicBatchingScheduler(timeout)
-        //scheduler = new NonBatchingScheduler(timeout)
+        scheduler = SchedulerFactory.getScheduler(schedulerType)
         val maxMemory = Runtime.getRuntime.maxMemory()  // total memory is just what the JVM has currently allocated
+
         println("TOTAL MEMORY: " + maxMemory)
         scheduler.start(numCores, maxMemory, gpus)
 

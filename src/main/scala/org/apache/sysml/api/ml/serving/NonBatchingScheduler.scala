@@ -6,11 +6,10 @@ import java.util.concurrent.atomic.LongAdder
 import scala.concurrent.Future
 import scala.concurrent.duration.Duration
 
-class NonBatchingScheduler(override val timeout: Duration) extends Scheduler {
+object NonBatchingScheduler extends Scheduler {
 
     override def start(numCores: Int, cpuMemoryBudgetInBytes: Long, gpus: String): Unit = {
-        if (PredictionService.__DEBUG__)
-            println("STARTING NON BATCHING SCHEDULER")
+        System.err.println(s"Starting Non Batching Scheduler with: ${numCores} CPUs and ${gpus} GPUs")
         super.start(numCores, cpuMemoryBudgetInBytes, gpus)
     }
 

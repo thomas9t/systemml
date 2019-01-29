@@ -98,7 +98,7 @@ trait Scheduler {
       */
     def setStatistics(flag: Boolean): Unit = { _statistics = flag }
 
-    def timeout: Duration
+    def timeout: Duration = 300.seconds
 
     /**
       * Method which is used to update scheduler state of execution of a batch. If necessary

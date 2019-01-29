@@ -6,7 +6,13 @@ import scala.concurrent.Future
 import scala.concurrent.duration.Duration
 import scala.math.min
 
-class BasicBatchingScheduler(override val timeout: Duration) extends BatchingScheduler {
+object BasicBatchingScheduler extends BatchingScheduler {
+
+    override def start(numCores: Int, cpuMemoryBudgetInBytes: Long, gpus: String): Unit = {
+        System.err.println(s"Starting Basic Batching Scheduler with: ${numCores} CPUs and ${gpus} GPUs")
+        super.start(numCores, cpuMemoryBudgetInBytes, gpus)
+    }
+
     /**
       * Returns a list of requests to execute. If the list contains more than one element, they will be batched
       * by the executor. Returns an empty list when there are no models to be scheduled.

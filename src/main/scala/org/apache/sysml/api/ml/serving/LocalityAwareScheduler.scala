@@ -80,7 +80,6 @@ object ExecMode extends Enumeration {
 
 object LocalityAwareScheduler extends BatchingScheduler {
     var queueManager : Thread = _
-    override val timeout: Duration = Duration(300, "seconds")
 
     val globalCacheQueues = new ConcurrentHashMap[String, BatchQueue]()
     val globalDiskQueues = new ConcurrentHashMap[String, BatchQueue]()
