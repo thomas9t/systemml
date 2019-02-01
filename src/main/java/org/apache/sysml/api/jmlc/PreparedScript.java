@@ -470,6 +470,8 @@ public class PreparedScript implements ConfigurableAPI
 
 	public boolean hasPinnedVars() { return _inVarReuse.entrySet().size() > 0; }
 
+	public boolean isVarPinned(String varname) { return _inVarReuse.keySet().contains(varname); }
+
 	/**
 	 * GPU Context to use for execution
 	 */
