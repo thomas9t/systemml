@@ -122,10 +122,8 @@ object ReferenceCountedModelManager extends ModelManager {
         // otherwise we need to re-pin the weights, possibly reading them from disk
         val model = models(name)
         model.synchronized {
-            if (!ps.hasPinnedVars) {
-                if (PredictionService.__DEBUG__) println("PINNING WEIGHTS")
-                model.weightFiles.foreach(x => ps.setMatrix(x._1, weightCache.getAsMatrixBlock(x._2), true))
-            }
+            if (PredictionService.__DEBUG__) println("PINNING WEIGHTS")
+            model.weightFiles.foreach(x => ps.setMatrix(x._1, weightCache.getAsMatrixBlock(x._2), true))
             modelRefCounts(name).increment()
         }
         if (PredictionService.__DEBUG__) println("DONE ACQUIRING MODEL: " + name)

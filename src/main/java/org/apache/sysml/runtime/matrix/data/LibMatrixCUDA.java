@@ -227,6 +227,23 @@ public class LibMatrixCUDA {
 				A, ret, numElems);
 		return ret;
 	}
+	
+	public static void printPointerForDebugging(Pointer ptr, int rows, int cols, String matName) {
+		if(sizeOfDataType == jcuda.Sizeof.DOUBLE) {
+			double[] devData = new double[rows*cols];
+			cudaMemcpy(Pointer.to(devData), ptr, rows*cols*sizeOfDataType, jcuda.runtime.cudaMemcpyKind.cudaMemcpyDeviceToHost);
+			System.out.println(matName + ":");
+			for(int i = 0; i < rows; i++) {
+				for(int j = 0; j < cols; j++) {
+					System.out.print(String.format("%.3f", devData[i*cols+j]) + " ");
+				}
+				System.out.println();
+			}
+		}
+		else {
+			throw new DMLRuntimeException("The method printPointerForDebugging is only supported for double precision.");
+		}
+	}
 
 	//********************************************************************/
 	//************************ End of UTILS ******************************/
@@ -362,10 +379,25 @@ public class LibMatrixCUDA {
 		}
 		Pointer imagePointer = getDensePointer(gCtx, input, instName);
 		Pointer outputPointer = getDensePointer(gCtx, outputBlock, instName);
-		
+		channelSums(gCtx, instName, imagePointer, outputPointer, N, C, HW);
+	}
+	
+	/**
+	 * Perform channel_sums operations: out = rowSums(matrix(colSums(A), rows=C, cols=HW))
+	 * 
+	 * @param gCtx a valid {@link GPUContext}
+	 * @param instName the invoking instruction's name for record {@link Statistics}.
+	 * @param imagePointer  input image pointer
+	 * @param outputPointer output pointer
+	 * @param N number of rows
+	 * @param C number of channels
+	 * @param HW height*width
+	 */
+	public static void channelSums(GPUContext gCtx, String instName, Pointer imagePointer, Pointer outputPointer, long N, long C, long HW) {
+		int cols = toInt(C*HW);
 		// We can replace this with CuDNN tensor reduce
 		Pointer tmp = gCtx.allocate(instName, cols*sizeOfDataType);
-		reduceCol(gCtx, instName, "reduce_col_sum", imagePointer, tmp, N, cols);
+		reduceCol(gCtx, instName, "reduce_col_sum", imagePointer, tmp, toInt(N), cols);
 		reduceRow(gCtx, instName, "reduce_row_sum", tmp, outputPointer, toInt(C), toInt(HW));
 		gCtx.cudaFreeHelper(instName, tmp, gCtx.EAGER_CUDA_FREE);
 	}
@@ -1410,7 +1442,7 @@ public class LibMatrixCUDA {
 	 * @param isRightTransposed true if right matrix is transposed
 	 * @param op                operator
 	 */
-	private static void matrixMatrixOp(ExecutionContext ec, GPUContext gCtx, String instName, MatrixObject in1, MatrixObject in2,
+	static void matrixMatrixOp(ExecutionContext ec, GPUContext gCtx, String instName, MatrixObject in1, MatrixObject in2,
 			String outputName, boolean isLeftTransposed, boolean isRightTransposed, BinaryOperator op) {
 		if (ec.getGPUContext(0) != gCtx)
 			throw new DMLRuntimeException("GPU : Invalid internal state, the GPUContext set with the ExecutionContext is not the same used to run this LibMatrixCUDA function");
@@ -1487,7 +1519,7 @@ public class LibMatrixCUDA {
 	 * @param c						output matrix of size (maxRlen, maxClen) allocated on GPU
 	 * @param op					the operation to perform
 	 */
-	private static void matrixMatrixOp(GPUContext gCtx, String instName, Pointer a, Pointer b, int maxRlen, int maxClen, int vecStatusA, int vecStatusB, Pointer c, BinaryOperator op) {
+	static void matrixMatrixOp(GPUContext gCtx, String instName, Pointer a, Pointer b, int maxRlen, int maxClen, int vecStatusA, int vecStatusB, Pointer c, BinaryOperator op) {
 		if(LOG.isTraceEnabled()) {
 			LOG.trace("GPU : matrix_matrix_cellwise_op" + ", GPUContext=" + gCtx);
 		}

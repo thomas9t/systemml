@@ -6,9 +6,9 @@
  * to you under the Apache License, Version 2.0 (the
  * "License"); you may not use this file except in compliance
  * with the License.  You may obtain a copy of the License at
- * 
+ *
  *   http://www.apache.org/licenses/LICENSE-2.0
- * 
+ *
  * Unless required by applicable law or agreed to in writing,
  * software distributed under the License is distributed on an
  * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
@@ -55,6 +55,7 @@ import org.apache.sysml.utils.Explain.ExplainCounts;
 import org.apache.sysml.utils.Explain.ExplainType;
 import org.apache.sysml.yarn.DMLAppMasterUtils;
 import org.apache.sysml.yarn.DMLYarnClientProxy;
+import org.apache.sysml.runtime.DMLRuntimeException;
 
 public class ScriptExecutorUtils {
 
@@ -80,13 +81,13 @@ public class ScriptExecutorUtils {
 	public static Program compileRuntimeProgram(String script, Map<String,String> nsscripts, Map<String, String> args,
 												String[] inputs, String[] outputs, ScriptType scriptType, DMLConfig dmlconf, SystemMLAPI api) {
 		return compileRuntimeProgram(script, nsscripts, args, null, null, inputs, outputs,
-				scriptType, dmlconf, api, true, false);
+				scriptType, dmlconf, api, true, false, false);
 	}
 
 	public static Program compileRuntimeProgram(String script, Map<String, String> args, String[] allArgs,
 												ScriptType scriptType, DMLConfig dmlconf, SystemMLAPI api) {
 		return compileRuntimeProgram(script, Collections.emptyMap(), args, allArgs, null, null, null,
-				scriptType, dmlconf, api, true, false);
+				scriptType, dmlconf, api, true, false, false);
 	}
 
 	/**
@@ -111,10 +112,11 @@ public class ScriptExecutorUtils {
 												LocalVariableMap symbolTable, String[] inputs, String[] outputs,
 												ScriptType scriptType, DMLConfig dmlconf, SystemMLAPI api,
 												// MLContext-specific flags
-												boolean performHOPRewrites, boolean maintainSymbolTable) {
+												boolean performHOPRewrites, boolean maintainSymbolTable,
+												boolean init) {
 		DMLScript.SCRIPT_TYPE = scriptType;
 
-		Program rtprog = null;
+		Program rtprog;
 
 		if (ConfigurationManager.isGPU() && !IS_JCUDA_AVAILABLE)
 			throw new RuntimeException("Incorrect usage: Cannot use the GPU backend without JCuda libraries. Hint: Include systemml-*-extra.jar (compiled using mvn package -P distribution) into the classpath.");
@@ -159,7 +161,8 @@ public class ScriptExecutorUtils {
 
 			//init working directories (before usage by following compilation steps)
 			if(api != SystemMLAPI.JMLC)
-				DMLScript.initHadoopExecution( dmlconf );
+				if (api != SystemMLAPI.MLContext || init)
+					DMLScript.initHadoopExecution( dmlconf );
 
 
 			//Step 4: rewrite HOP DAGs (incl IPA and memory estimates)
@@ -219,8 +222,9 @@ public class ScriptExecutorUtils {
 				ExplainCounts counts = Explain.countDistributedOperations(rtprog);
 				Statistics.resetNoOfCompiledJobs( counts.numJobs );
 				//explain plan of program (hops or runtime)
-				if( DMLScript.EXPLAIN != ExplainType.NONE )
-					System.out.println(Explain.display(prog, rtprog, DMLScript.EXPLAIN, counts));
+				if( ConfigurationManager.getDMLOptions().explainType != ExplainType.NONE )
+					System.out.println(
+							Explain.display(prog, rtprog, ConfigurationManager.getDMLOptions().explainType, counts));
 
 				Statistics.stopCompileTimer();
 			}
@@ -228,9 +232,6 @@ public class ScriptExecutorUtils {
 		catch(ParseException pe) {
 			// don't chain ParseException (for cleaner error output)
 			throw pe;
-		}
-		catch(IOException ex) {
-			throw new DMLException(ex);
 		}
 		catch(Exception ex) {
 			throw new DMLException(ex);
@@ -242,11 +243,9 @@ public class ScriptExecutorUtils {
 	 * Execute the runtime program. This involves execution of the program
 	 * blocks that make up the runtime program and may involve dynamic
 	 * recompilation.
-	 * 
+	 *
 	 * @param rtprog
 	 *            runtime program
-	 * @param dmlconf
-	 *            dml configuration
 	 * @param statisticsMaxHeavyHitters
 	 *            maximum number of statistics to print
 	 * @param symbolTable
@@ -259,7 +258,7 @@ public class ScriptExecutorUtils {
 	 * 			  list of GPU contexts
 	 * @return execution context
 	 */
-	public static ExecutionContext executeRuntimeProgram(Program rtprog, DMLConfig dmlconf, int statisticsMaxHeavyHitters,
+	public static ExecutionContext executeRuntimeProgram(Program rtprog, int statisticsMaxHeavyHitters,
 														 LocalVariableMap symbolTable, HashSet<String> outputVariables,
 														 SystemMLAPI api, List<GPUContext> gCtxs) {
 		boolean exceptionThrown = false;
@@ -278,6 +277,7 @@ public class ScriptExecutorUtils {
 			ec.setGPUContexts(gCtxs);
 		}
 
+		Exception finalizeException = null;
 		try {
 			// run execute (w/ exception handling to ensure proper shutdown)
 			rtprog.execute(ec);
@@ -286,29 +286,36 @@ public class ScriptExecutorUtils {
 			throw e;
 		} finally { // ensure cleanup/shutdown
 			if (ConfigurationManager.isGPU() && !ec.getGPUContexts().isEmpty()) {
-				// -----------------------------------------------------------------
-				// The below code pulls the output variables on the GPU to the host. This is required especially when:
-				// The output variable was generated as part of a MLContext session with GPU enabled
-				// and was passed to another MLContext with GPU disabled
-				// The above scenario occurs in our gpu test suite (eg: BatchNormTest).
-				if(outputVariables != null) {
-					for(String outVar : outputVariables) {
-						Data data = ec.getVariable(outVar);
-						if(data != null && data instanceof MatrixObject) {
-							for(GPUContext gCtx : ec.getGPUContexts()) {
-								GPUObject gpuObj = ((MatrixObject)data).getGPUObject(gCtx);
-								if(gpuObj != null && gpuObj.isDirty()) {
-									gpuObj.acquireHostRead(null);
+				try {
+					HashSet<MatrixObject> outputMatrixObjects = new HashSet<>();
+					// -----------------------------------------------------------------
+					// The below code pulls the output variables on the GPU to the host. This is required especially when:
+					// The output variable was generated as part of a MLContext session with GPU enabled
+					// and was passed to another MLContext with GPU disabled
+					// The above scenario occurs in our gpu test suite (eg: BatchNormTest).
+					if(outputVariables != null) {
+						for(String outVar : outputVariables) {
+							Data data = ec.getVariable(outVar);
+							if(data instanceof MatrixObject) {
+								for(GPUContext gCtx : ec.getGPUContexts()) {
+									GPUObject gpuObj = ((MatrixObject)data).getGPUObject(gCtx);
+									if(gpuObj != null && gpuObj.isDirty()) {
+										gpuObj.acquireHostRead(null);
+									}
 								}
+								outputMatrixObjects.add(((MatrixObject)data));
 							}
 						}
 					}
+					// -----------------------------------------------------------------
+					for(GPUContext gCtx : ec.getGPUContexts()) {
+						gCtx.clearTemporaryMemory(outputMatrixObjects);
+					}
+				} catch (Exception e1) {
+					exceptionThrown = true;
+					finalizeException = e1; // do not throw exception while cleanup
 				}
 
-				for (GPUContext gCtx : ec.getGPUContexts())
-					gCtx.clearTemporaryMemory();
-
-				// -----------------------------------------------------------------
 			}
 			if( ConfigurationManager.isCodegenEnabled() )
 				SpoofCompiler.cleanupCodeGenerator();
@@ -326,7 +333,10 @@ public class ScriptExecutorUtils {
 								ConfigurationManager.getDMLOptions().getStatisticsMaxHeavyHitters()));
 			}
 		}
+		if(finalizeException != null) {
+			throw new DMLRuntimeException("Error occured while GPU memory cleanup.", finalizeException);
+		}
 		return ec;
-	}
+						}
 
 }

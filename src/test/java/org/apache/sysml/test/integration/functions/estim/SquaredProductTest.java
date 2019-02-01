@@ -24,6 +24,7 @@ import org.apache.sysml.hops.estim.EstimatorBasicAvg;
 import org.apache.sysml.hops.estim.EstimatorBasicWorst;
 import org.apache.sysml.hops.estim.EstimatorBitsetMM;
 import org.apache.sysml.hops.estim.EstimatorDensityMap;
+import org.apache.sysml.hops.estim.EstimatorLayeredGraph;
 import org.apache.sysml.hops.estim.EstimatorMatrixHistogram;
 import org.apache.sysml.hops.estim.EstimatorSample;
 import org.apache.sysml.hops.estim.SparsityEstimator;
@@ -85,13 +86,13 @@ public class SquaredProductTest extends AutomatedTestBase
 	}
 	
 	@Test
-	public void testDensityMap7Case1() {
-		runSparsityEstimateTest(new EstimatorDensityMap(7), m, k, n, case1);
+	public void testDensityMap8Case1() {
+		runSparsityEstimateTest(new EstimatorDensityMap(8), m, k, n, case1);
 	}
 	
 	@Test
-	public void testDensityMap7Case2() {
-		runSparsityEstimateTest(new EstimatorDensityMap(7), m, k, n, case2);
+	public void testDensityMap8Case2() {
+		runSparsityEstimateTest(new EstimatorDensityMap(8), m, k, n, case2);
 	}
 	
 	@Test
@@ -142,6 +143,16 @@ public class SquaredProductTest extends AutomatedTestBase
 	@Test
 	public void testSampling20Case2() {
 		runSparsityEstimateTest(new EstimatorSample(0.2), m, k, n, case2);
+	}
+	
+	@Test
+	public void testLayeredGraphCase1() {
+		runSparsityEstimateTest(new EstimatorLayeredGraph(), m, k, n, case1);
+	}
+	
+	@Test
+	public void testLayeredGraphCase2() {
+		runSparsityEstimateTest(new EstimatorLayeredGraph(), m, k, n, case2);
 	}
 	
 	private void runSparsityEstimateTest(SparsityEstimator estim, int m, int k, int n, double[] sp) {

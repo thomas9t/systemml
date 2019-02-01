@@ -44,7 +44,7 @@ public class FullDistributionTest extends AutomatedTestBase
 	
 	private enum TEST_TYPE { 
 		NORMAL, NORMAL_NOPARAMS, NORMAL_MEAN, 
-		NORMAL_SD, F, T, CHISQ, EXP, EXP_NOPARAMS 
+		NORMAL_SD, BINOMIAL, F, T, CHISQ, EXP, EXP_NOPARAMS 
 	}
 	
 	
@@ -72,6 +72,21 @@ public class FullDistributionTest extends AutomatedTestBase
 	@Test
 	public void testNormalSdCP() {
 		runDFTest(TEST_TYPE.NORMAL_SD, true, 2.0, null, ExecType.CP);
+	}
+	
+	@Test
+	public void testBinomiaCP() {
+		runDFTest(TEST_TYPE.BINOMIAL, true, 10.0, null, ExecType.CP);
+	}
+	
+	@Test
+	public void testBinomiaSpark() {
+		runDFTest(TEST_TYPE.BINOMIAL, true, 10.0, null, ExecType.SPARK);
+	}
+
+	@Test
+	public void testBinomiaMR() {
+		runDFTest(TEST_TYPE.BINOMIAL, true, 10.0, null, ExecType.MR);
 	}
 	
 	@Test
@@ -187,16 +202,11 @@ public class FullDistributionTest extends AutomatedTestBase
 	 */
 	private void runDFTest(TEST_TYPE type, boolean inverse, Double param1, Double param2, ExecType instType) 
 	{
-		//setup multi backend configuration
-		RUNTIME_PLATFORM platformOld = rtplatform;
-		switch( instType ){
-			case MR: rtplatform = RUNTIME_PLATFORM.HADOOP; break;
-			case SPARK: rtplatform = RUNTIME_PLATFORM.SPARK; break;
-			default: rtplatform = RUNTIME_PLATFORM.HYBRID; break;
-		}
 		boolean sparkConfigOld = DMLScript.USE_LOCAL_SPARK_CONFIG;
-		if( rtplatform == RUNTIME_PLATFORM.SPARK )
-			DMLScript.USE_LOCAL_SPARK_CONFIG = true;
+		RUNTIME_PLATFORM platformOld = setRuntimePlatform(instType);
+		if(shouldSkipTest())
+			return;
+
 		
 		try
 		{
@@ -228,6 +238,11 @@ public class FullDistributionTest extends AutomatedTestBase
 					rCmd = "Rscript" + " " + fullRScriptName + " " + Double.toString(in) + " " + Double.toString(param1) + " " + Double.toString(param2) + " " + expected("dfout");
 					break;
 				
+				case BINOMIAL:
+					programArgs = new String[]{"-args", Double.toString(in), Integer.toString(param1.intValue()), output("dfout") };
+					rCmd = "Rscript" + " " + fullRScriptName + " " + Double.toString(in) + " " + Integer.toString(param1.intValue()) + " " + expected("dfout");
+					break;
+
 				default: 
 					throw new RuntimeException("Invalid distribution function: " + type);
 			}

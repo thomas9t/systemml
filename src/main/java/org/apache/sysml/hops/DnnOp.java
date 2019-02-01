@@ -20,6 +20,7 @@
 package org.apache.sysml.hops;
 
 import org.apache.sysml.conf.ConfigurationManager;
+import org.apache.sysml.conf.DMLConfig;
 import org.apache.sysml.hops.rewrite.HopRewriteUtils;
 import org.apache.sysml.lops.DnnTransform;
 import org.apache.sysml.lops.DnnTransform.OperationTypes;
@@ -46,6 +47,8 @@ public class DnnOp extends MultiThreadedHop
 	// This guards us from cases where the user provides incorrect C,H,W parameters.
 	private static final boolean THROW_ERROR_IF_INFERRED_SHAPE_MISMATCH = true;
 	// -------------------------------------------------------------------------
+	
+	private static final boolean GPU_RECOMPUTE_ACTIVATIONS = ConfigurationManager.getDMLConfig().getBooleanValue(DMLConfig.GPU_RECOMPUTE_ACTIVATIONS); 
 	
 	// Specifies the type of this hop
 	private Hop.OpOpDnn op;
@@ -141,6 +144,7 @@ public class DnnOp extends MultiThreadedHop
 			case UPDATE_EMA:
 			case INV_VAR:
 			case BATCH_NORM2D_BACKWARD_DX:
+			case BATCH_NORM2D_BACKWARD_DGAMMA:
 			{	
 				// GPU-specific operators
 				setLops(constructDnnLops(ExecType.GPU, inputs));
@@ -181,6 +185,7 @@ public class DnnOp extends MultiThreadedHop
 			case CHANNEL_SUMS:
 			case UPDATE_EMA:
 				return 3;
+			case BATCH_NORM2D_BACKWARD_DGAMMA:
 			case UPDATE_NESTEROV_X:
 				return 4;
 			default:
@@ -271,11 +276,16 @@ public class DnnOp extends MultiThreadedHop
 		// by reducing unnecessary sparse-to-dense-to-sparse conversion.
 		// For other backends, this operators is not necessary as it reduces an additional relu operator.
 		Hop parentReLU = isInputReLU(inputs.get(0));
-		if(OptimizerUtils.ALLOW_OPERATOR_FUSION && et == ExecType.CP && op == OpOpDnn.MAX_POOL && parentReLU != null) {
+		
+		if(OptimizerUtils.ALLOW_OPERATOR_FUSION && 
+			(et == ExecType.CP || (et == ExecType.GPU && GPU_RECOMPUTE_ACTIVATIONS)) 
+			&& op == OpOpDnn.MAX_POOL && parentReLU != null) {
 			lhsInputLop = parentReLU.constructLops();
 			lopOp = OperationTypes.RELU_MAX_POOLING;
 		}
-		else if(OptimizerUtils.ALLOW_OPERATOR_FUSION && et == ExecType.CP && op == OpOpDnn.MAX_POOL_BACKWARD && parentReLU != null) {
+		else if(OptimizerUtils.ALLOW_OPERATOR_FUSION && 
+			(et == ExecType.CP || (et == ExecType.GPU && GPU_RECOMPUTE_ACTIVATIONS)) 
+			&& op == OpOpDnn.MAX_POOL_BACKWARD && parentReLU != null) {
 			lhsInputLop = parentReLU.constructLops();
 			lopOp = OperationTypes.RELU_MAX_POOLING_BACKWARD;
 		}
@@ -324,7 +334,6 @@ public class DnnOp extends MultiThreadedHop
 		
 		// ---------------------------------------------------------------
 		// Add input/output for parent lops of convolutionLop
-		lhsInputLop.addOutput(convolutionLop);
 		if(optionalRhsInputLop != null) {
 			convolutionLop.addInput(optionalRhsInputLop);
 			optionalRhsInputLop.addOutput(convolutionLop);
@@ -538,7 +547,7 @@ public class DnnOp extends MultiThreadedHop
 		
 		if(op == OpOpDnn.BIASADD || op == OpOpDnn.BIASMULT || op == OpOpDnn.BATCH_NORM2D_TEST ||
 			op == OpOpDnn.UPDATE_NESTEROV_X || op == OpOpDnn.UPDATE_EMA || op == OpOpDnn.INV_VAR ||
-			op == OpOpDnn.BATCH_NORM2D_BACKWARD_DX) {
+			op == OpOpDnn.BATCH_NORM2D_BACKWARD_DX || op == OpOpDnn.BATCH_NORM2D_BACKWARD_DGAMMA) {
 			// Same dimension as the first input
 			MatrixCharacteristics[] mc = memo.getAllInputStats(getInput());
 			ret[0] = mc[0].rowsKnown() ? mc[0].getRows() : -1;
@@ -755,7 +764,7 @@ public class DnnOp extends MultiThreadedHop
 	{
 		if(op == OpOpDnn.BIASADD || op == OpOpDnn.BIASMULT || op == OpOpDnn.BATCH_NORM2D_TEST || 
 			op == OpOpDnn.UPDATE_NESTEROV_X || op == OpOpDnn.UPDATE_EMA || op == OpOpDnn.INV_VAR ||
-			op == OpOpDnn.BATCH_NORM2D_BACKWARD_DX) {
+			op == OpOpDnn.BATCH_NORM2D_BACKWARD_DX || op == OpOpDnn.BATCH_NORM2D_BACKWARD_DGAMMA) {
 			// Same dimension as the first input
 			Hop input1 = getInput().get(0);
 			setDim1(input1.getDim1());
@@ -873,7 +882,7 @@ public class DnnOp extends MultiThreadedHop
 		if(op == OpOpDnn.BIASADD || op == OpOpDnn.BIASMULT || op == OpOpDnn.BATCH_NORM2D_TEST || op == OpOpDnn.CHANNEL_SUMS ||
 			op == OpOpDnn.UPDATE_NESTEROV_X || op == OpOpDnn.RESHAPE_COLMEANS ||
 			op == OpOpDnn.UPDATE_EMA_VAR || op == OpOpDnn.UPDATE_EMA || op == OpOpDnn.INV_VAR ||
-			op == OpOpDnn.BATCH_NORM2D_BACKWARD_DX) {
+			op == OpOpDnn.BATCH_NORM2D_BACKWARD_DX || op == OpOpDnn.BATCH_NORM2D_BACKWARD_DGAMMA) {
 			throw new RuntimeException("getDim method should not be invoked for " + op.name());
 		}
 		try {

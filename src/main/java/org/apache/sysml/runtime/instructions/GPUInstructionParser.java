@@ -52,6 +52,8 @@ public class GPUInstructionParser  extends InstructionParser
 		String2GPUInstructionType.put( "conv2d_backward_data",   GPUINSTRUCTION_TYPE.Dnn);
 		String2GPUInstructionType.put( "maxpooling",             GPUINSTRUCTION_TYPE.Dnn);
 		String2GPUInstructionType.put( "maxpooling_backward",    GPUINSTRUCTION_TYPE.Dnn);
+		String2GPUInstructionType.put( "relu_maxpooling",        GPUINSTRUCTION_TYPE.Dnn);
+		String2GPUInstructionType.put( "relu_maxpooling_backward", GPUINSTRUCTION_TYPE.Dnn);
 		String2GPUInstructionType.put( "avgpooling",             GPUINSTRUCTION_TYPE.Dnn);
 		String2GPUInstructionType.put( "avgpooling_backward",    GPUINSTRUCTION_TYPE.Dnn);
 		String2GPUInstructionType.put( "bias_add",               GPUINSTRUCTION_TYPE.Dnn);
@@ -66,6 +68,7 @@ public class GPUInstructionParser  extends InstructionParser
 		String2GPUInstructionType.put( "reshape_colmeans",      GPUINSTRUCTION_TYPE.Dnn);
 		String2GPUInstructionType.put( "inv_var",      			GPUINSTRUCTION_TYPE.Dnn);
 		String2GPUInstructionType.put( "batch_norm2d_bwd_dx",   GPUINSTRUCTION_TYPE.Dnn);
+		String2GPUInstructionType.put( "batch_norm2d_bwd_dgamma",   GPUINSTRUCTION_TYPE.Dnn);
 		
 		// Matrix Multiply Operators
 		String2GPUInstructionType.put( "ba+*",  GPUINSTRUCTION_TYPE.AggregateBinary);

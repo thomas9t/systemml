@@ -31,8 +31,11 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.Iterator;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Future;
 import java.util.stream.IntStream;
 
+import org.apache.commons.lang3.concurrent.ConcurrentUtils;
 import org.apache.commons.math3.random.Well1024a;
 import org.apache.hadoop.io.DataInputBuffer;
 import org.apache.sysml.conf.ConfigurationManager;
@@ -42,6 +45,7 @@ import org.apache.sysml.lops.MapMultChain.ChainType;
 import org.apache.sysml.lops.PartialAggregate.CorrectionLocationType;
 import org.apache.sysml.runtime.DMLRuntimeException;
 import org.apache.sysml.runtime.controlprogram.caching.CacheBlock;
+import org.apache.sysml.runtime.controlprogram.caching.LazyWriteBuffer;
 import org.apache.sysml.runtime.controlprogram.caching.MatrixObject.UpdateType;
 import org.apache.sysml.runtime.functionobjects.Builtin;
 import org.apache.sysml.runtime.functionobjects.Builtin.BuiltinCode;
@@ -330,6 +334,12 @@ public class MatrixBlock extends MatrixValue implements CacheBlock, Externalizab
 	public MatrixBlock allocateDenseBlock() {
 		allocateDenseBlock( true );
 		return this;
+	}
+	
+	public Future<MatrixBlock> allocateBlockAsync() {
+		ExecutorService pool = LazyWriteBuffer.getUtilThreadPool();
+		return (pool != null) ? pool.submit(() -> allocateBlock()) : //async
+			ConcurrentUtils.constantFuture(allocateBlock()); //fallback sync
 	}
 
 	public MatrixBlock allocateBlock() {
@@ -1612,10 +1622,14 @@ public class MatrixBlock extends MatrixValue implements CacheBlock, Externalizab
 	 * @param appendOnly ?
 	 */
 	public void merge(MatrixBlock that, boolean appendOnly) {
-		merge(that, appendOnly, false);
+		merge(that, appendOnly, false, true);
 	}
 	
 	public void merge(MatrixBlock that, boolean appendOnly, boolean par) {
+		merge(that, appendOnly, par, true);
+	}
+	
+	public void merge(MatrixBlock that, boolean appendOnly, boolean par, boolean deep) {
 		//check for empty input source (nothing to merge)
 		if( that == null || that.isEmptyBlock(false) )
 			return;
@@ -1636,7 +1650,7 @@ public class MatrixBlock extends MatrixValue implements CacheBlock, Externalizab
 		//core matrix block merge (guaranteed non-empty source/target, nnz maintenance not required)
 		long nnz = nonZeros + that.nonZeros;
 		if( sparse )
-			mergeIntoSparse(that, appendOnly);
+			mergeIntoSparse(that, appendOnly, deep);
 		else if( par )
 			mergeIntoDensePar(that);
 		else
@@ -1712,7 +1726,7 @@ public class MatrixBlock extends MatrixValue implements CacheBlock, Externalizab
 		}
 	}
 
-	private void mergeIntoSparse(MatrixBlock that, boolean appendOnly) {
+	private void mergeIntoSparse(MatrixBlock that, boolean appendOnly, boolean deep) {
 		SparseBlock a = sparseBlock;
 		final boolean COO = (a instanceof SparseBlockCOO);
 		final int m = rlen;
@@ -1723,7 +1737,7 @@ public class MatrixBlock extends MatrixValue implements CacheBlock, Externalizab
 				if( b.isEmpty(i) ) continue;
 				if( !COO && a.isEmpty(i) ) {
 					//copy entire sparse row (no sort required)
-					a.set(i, b.get(i), true);
+					a.set(i, b.get(i), deep);
 				}
 				else {
 					boolean appended = false;
@@ -2642,9 +2656,9 @@ public class MatrixBlock extends MatrixValue implements CacheBlock, Externalizab
 		if( LibMatrixAgg.isSupportedUnaryOperator(op) ) {
 			//e.g., cumsum/cumprod/cummin/cumax/cumsumprod
 			if( op.getNumThreads() > 1 )
-				LibMatrixAgg.cumaggregateUnaryMatrix(this, ret, op, op.getNumThreads());
+				ret = LibMatrixAgg.cumaggregateUnaryMatrix(this, ret, op, op.getNumThreads());
 			else
-				LibMatrixAgg.cumaggregateUnaryMatrix(this, ret, op);
+				ret = LibMatrixAgg.cumaggregateUnaryMatrix(this, ret, op);
 		}
 		else if(!sparse && !isEmptyBlock(false)
 			&& OptimizerUtils.isMaxLocalParallelism(op.getNumThreads())) {
@@ -3677,7 +3691,7 @@ public class MatrixBlock extends MatrixValue implements CacheBlock, Externalizab
 	public final MatrixBlock leftIndexingOperations(MatrixBlock rhsMatrix,
 			IndexRange ixrange, MatrixBlock ret, UpdateType update) {
 		return leftIndexingOperations(rhsMatrix, (int)ixrange.rowStart,
-			(int)ixrange.rowEnd, (int)ixrange.colStart, (int)ixrange.colEnd, ret, update);
+				(int)ixrange.rowEnd, (int)ixrange.colStart, (int)ixrange.colEnd, ret, update);
 	}
 
 	public MatrixBlock leftIndexingOperations(MatrixBlock rhsMatrix,
@@ -3803,8 +3817,8 @@ public class MatrixBlock extends MatrixValue implements CacheBlock, Externalizab
 
 	public MatrixBlock slice(IndexRange ixrange, MatrixBlock ret) {
 		return slice(
-			(int)ixrange.rowStart, (int)ixrange.rowEnd, 
-			(int)ixrange.colStart, (int)ixrange.colEnd, true, ret);
+				(int)ixrange.rowStart, (int)ixrange.rowEnd, 
+				(int)ixrange.colStart, (int)ixrange.colEnd, true, ret);
 	}
 	
 	public MatrixBlock slice(int rl, int ru) {
@@ -5177,7 +5191,7 @@ public class MatrixBlock extends MatrixValue implements CacheBlock, Externalizab
 	{	
 		CTable ctable = CTable.getCTableFnObject();
 		double w = scalarThat;
-		int offset = (int) ((ix1.getRowIndex()-1)*brlen); 
+		int offset = (int) ((ix1.getRowIndex()-1)*brlen);  
 		
 		//sparse-unsafe ctable execution
 		//(because input values of 0 are invalid and have to result in errors) 

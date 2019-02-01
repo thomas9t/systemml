@@ -35,58 +35,17 @@ public class GPUMatrixMemoryManager {
 	public GPUMatrixMemoryManager(GPUMemoryManager gpuManager) {
 		this.gpuManager = gpuManager;
 	}
-
+	
 	/**
 	 * Adds the GPU object to the memory manager
-	 *
+	 * 
 	 * @param gpuObj the handle to the GPU object
 	 */
 	void addGPUObject(GPUObject gpuObj) {
 		gpuObjects.add(gpuObj);
 	}
 
-	/**
-	 * Return a set of GPU Objects associated with a list of pointers
-	 * @param pointers A list of pointers
-	 * @return A set of GPU objects corresponding to any of these pointers
-	 */
-	Set<GPUObject> getGpuObjects(Set<Pointer> pointers) {
-		Set<GPUObject> gObjs = new HashSet<>();
-		for (GPUObject g : gpuObjects) {
-			if (!Collections.disjoint(getPointers(g), pointers))
-				gObjs.add(g);
-		}
-		return gObjs;
-	}
-
-	/**
-	 * Get list of all Pointers in a GPUObject
-	 * @param gObj gpu object
-	 * @return set of pointers
-	 */
-	Set<Pointer> getPointers(GPUObject gObj) {
-		Set<Pointer> ret = new HashSet<>();
-		if(!gObj.isDensePointerNull() && gObj.getSparseMatrixCudaPointer() != null) {
-			LOG.warn("Matrix allocated in both dense and sparse format");
-		}
-		if(!gObj.isDensePointerNull()) {
-			// && gObj.evictedDenseArr == null - Ignore evicted array
-			ret.add(gObj.getDensePointer());
-		}
-		if(gObj.getSparseMatrixCudaPointer() != null) {
-			CSRPointer sparsePtr = gObj.getSparseMatrixCudaPointer();
-			if(sparsePtr != null) {
-				if(sparsePtr.rowPtr != null)
-					ret.add(sparsePtr.rowPtr);
-				else if(sparsePtr.colInd != null)
-					ret.add(sparsePtr.colInd);
-				else if(sparsePtr.val != null)
-					ret.add(sparsePtr.val);
-			}
-		}
-		return ret;
-	}
-
+	
 	/**
 	 * list of allocated {@link GPUObject} instances allocated on {@link GPUContext#deviceNum} GPU
 	 * These are matrices allocated on the GPU on which rmvar hasn't been called yet.
@@ -97,13 +56,31 @@ public class GPUMatrixMemoryManager {
 	HashSet<GPUObject> gpuObjects = new HashSet<>();
 
 	/**
+	 * Return a set of GPU Objects associated with a list of pointers
+	 * @param pointers A list of pointers
+	 * @return A set of GPU objects corresponding to any of these pointers
+	 */
+	Set<GPUObject> getGpuObjects(Set<Pointer> pointers) {
+		Set<GPUObject> gObjs = new HashSet<>();
+		for (GPUObject g : gpuObjects) {
+			if (!Collections.disjoint(g.getPointers(), pointers))
+				gObjs.add(g);
+		}
+		return gObjs;
+	}
+	
+	Set<GPUObject> getGpuObjects() {
+		return gpuObjects;
+	}
+	
+	/**
 	 * Return all pointers in the first section
 	 * @return all pointers in this section
 	 */
 	Set<Pointer> getPointers() {
-		return gpuObjects.stream().flatMap(gObj -> getPointers(gObj).stream()).collect(Collectors.toSet());
+		return gpuObjects.stream().flatMap(gObj -> gObj.getPointers().stream()).collect(Collectors.toSet());
 	}
-
+	
 	/**
 	 * Get pointers from the first memory sections "Matrix Memory"
 	 * @param locked return locked pointers if true
@@ -115,12 +92,12 @@ public class GPUMatrixMemoryManager {
 		return gpuObjects.stream().filter(
 				gObj -> (gObj.isLocked() == locked && gObj.isDirty() == dirty) ||
 						(gObj.mat.isCleanupEnabled() == isCleanupEnabled)).flatMap(
-				gObj -> getPointers(gObj).stream()).collect(Collectors.toSet());
+						gObj -> gObj.getPointers().stream()).collect(Collectors.toSet());
 	}
-
+	
 	/**
 	 * Clear all unlocked gpu objects
-	 *
+	 * 
 	 * @param opcode instruction code
 	 * @throws DMLRuntimeException if error
 	 */
