@@ -481,6 +481,8 @@ public class PreparedScript implements ConfigurableAPI
 
 		return rvars;
 	}
+
+	public void setGpuContext(GPUContext gCtx) { this._gpuCtx.set(0, gCtx); }
 	
 	/**
 	 * Explain the DML/PyDML program and view result as a string.
