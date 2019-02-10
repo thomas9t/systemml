@@ -264,6 +264,7 @@ object PredictionService extends PredictionJsonProtocol with AddModelJsonProtoco
                                             complete(StatusCodes.InternalServerError, msg + e.getMessage)
                                         }
                                     } finally {
+                                        System.err.println("REQUEST COMPLETED: " + currNumRequests)
                                         currNumRequests.decrement()
                                     }
                                 }
