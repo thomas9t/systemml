@@ -22,7 +22,6 @@ import scala.concurrent.Future
 import scala.concurrent.duration._
 import java.util.concurrent._
 import java.util.List
-import java.util.concurrent.atomic.LongAdder
 
 import org.apache.sysml.runtime.instructions.gpu.context.GPUContextPool
 import org.apache.sysml.runtime.instructions.gpu.context.GPUContext
@@ -40,7 +39,8 @@ case class SchedulingRequest(request: PredictionRequest,
 trait Scheduler {
     var executorService: ExecutorService = _
     protected var _statistics = true
-    implicit val ec : ExecutionContext = ExecutionContext.fromExecutor(Executors.newFixedThreadPool(2000))
+//    implicit val ec : ExecutionContext = ExecutionContext.fromExecutor(Executors.newFixedThreadPool(2000))
+    implicit val ec = ExecutionContext.global
     var executorTypes = Array[String]()
     var modelManager = ReferenceCountedModelManager
 

@@ -45,7 +45,8 @@ import org.apache.sysml.api.jmlc.Connection
 import org.apache.sysml.api.jmlc.PreparedScript
 import org.apache.sysml.conf.ConfigurationManager
 import org.apache.sysml.runtime.matrix.MatrixCharacteristics
-import org.apache.sysml.runtime.util.{DataConverter, FastBufferedDataOutputStream}
+import org.apache.sysml.runtime.util.DataConverter
+import scala.concurrent.ExecutionContext
 
 // format: can be file, binary, csv, ijv, jpeg, ...
 
@@ -161,7 +162,7 @@ object PredictionService extends PredictionJsonProtocol with AddModelJsonProtoco
     val combined = customConf.withFallback(basicConf)
     implicit val system = ActorSystem("systemml-prediction-service", ConfigFactory.load(combined))
     implicit val materializer = ActorMaterializer()
-    implicit val executionContext = system.dispatcher
+    implicit val executionContext = ExecutionContext.global
     implicit val timeout = akka.util.Timeout(300.seconds)
     val userPassword = new HashMap[String, String]()
     var bindingFuture: Future[Http.ServerBinding] = null
@@ -410,6 +411,7 @@ object PredictionService extends PredictionJsonProtocol with AddModelJsonProtoco
 
         if (!isBinaryFormat(path)) {
             println("CONVERTING TO BINARY")
+            println("BLOCKSIZE: " + ConfigurationManager.getBlocksize)
             data.getMatrixCharacteristics
             val binPath = dir + "/binary/" + getNameFromPath(path) + ".mtx"
             DataConverter.writeMatrixToHDFS(data, binPath,
