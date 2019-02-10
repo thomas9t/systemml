@@ -50,8 +50,7 @@ trait BatchingScheduler extends Scheduler {
                     shortFuse += name
                 }
 
-                if (modelQueues.get(name).size() >= getOptimalBatchSize(name, execType) ||
-                    modelQueues.get(name).size() == 1) {
+                if (modelQueues.get(name).size() >= getOptimalBatchSize(name, execType)) {
                     batchableModels += name
                 }
             }
@@ -66,7 +65,7 @@ trait BatchingScheduler extends Scheduler {
       */
     def checkShortFuse(request: SchedulingRequest) : Boolean = {
         val elapsed = System.nanoTime() - request.receivedTime
-        val shortFuse = elapsed >= (1.2*latencyObjectives.get(request.model.name).toNanos).toLong
+        val shortFuse = elapsed >= (1.05*latencyObjectives.get(request.model.name).toNanos).toLong
         shortFuse
     }
 }
