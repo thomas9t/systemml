@@ -240,6 +240,8 @@ object PredictionService extends PredictionJsonProtocol with AddModelJsonProtoco
                                 validate(models.contains(request.name), "The model is not available.") {
                                     try {
                                         currNumRequests.increment()
+                                        System.err.println("CURR NUM REQUESTS: " + currNumRequests)
+                                        System.err.println("CURR NUM THREADS: " + Thread.activeCount())
                                         val start = System.nanoTime()
                                         val processedRequest = processPredictionRequest(request)
                                         val deserializationTime = System.nanoTime() - start
