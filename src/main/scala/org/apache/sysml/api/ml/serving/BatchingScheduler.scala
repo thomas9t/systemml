@@ -50,7 +50,8 @@ trait BatchingScheduler extends Scheduler {
                     shortFuse += name
                 }
 
-                if (modelQueues.get(name).size() >= getOptimalBatchSize(name, execType)) {
+                if (modelQueues.get(name).size() >= getOptimalBatchSize(name, execType) ||
+                    modelQueues.get(name).size() == 1) {
                     batchableModels += name
                 }
             }
