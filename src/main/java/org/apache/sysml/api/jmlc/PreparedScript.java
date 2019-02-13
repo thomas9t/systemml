@@ -130,6 +130,15 @@ public class PreparedScript implements ConfigurableAPI
 		_dmlconf = dmlconf;
 		_cconf = cconf;
 	}
+
+	public void clearPinnedData() {
+		for (String name : _inVarReuse.keySet()) {
+			Data mo = _inVarReuse.get(name);
+			if (mo instanceof MatrixObject)
+				((MatrixObject) mo).enableCleanup(true);
+			_inVarReuse.remove(name);
+		}
+	}
 	
 	/**
 	 * Sets a boolean flag indicating if runtime statistics should be gathered
