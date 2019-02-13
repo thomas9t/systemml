@@ -141,7 +141,7 @@ object ReferenceCountedModelManager extends ModelManager {
 
         if (PredictionService.__DEBUG__) println("RELEASE MODEL: " + name + " => " + modelRefCounts(name).longValue())
         if (modelRefCounts(name).longValue() == 0) {
-            models(name).synchronized {
+            models(name).script.synchronized {
                 if (modelRefCounts(name).longValue() == 0) {
                     if (PredictionService.__DEBUG__) println("ACTUALLY RELEASING THE MODEL")
                     models(name).script.foreach { x => x._2.clearPinnedData() }
