@@ -107,8 +107,8 @@ class JmlcExecutor(scheduler: Scheduler, execType: String, name: String, gCtx: G
                 val script = scheduler.modelManager.acquire(req.model.name, this)
                 val modelAcquireTime = System.nanoTime() - modelAcquireStart
                 script.setMatrix(req.model.inputVarName, batchedMatrixData, false)
-                if (gCtx != null)
-                    script.setGpuContext(gCtx)
+//                if (gCtx != null)
+//                    script.setGpuContext(gCtx)
                 if (PredictionService.__DEBUG__)
                     println("BEGIN EXEC: " + req.model.name + " ON " + name)
                 val execStart = System.nanoTime()
