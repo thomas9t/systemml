@@ -114,6 +114,7 @@ object ReferenceCountedModelManager extends ModelManager {
          if (PredictionService.__DEBUG__) println("ACQUIRING MODEL: " + name + " => " + modelRefCounts(name).longValue())
 
         val execName = if (executor.getExecType == "GPU") executor.getName else executor.getExecType
+        System.err.println("GOT PS FOR EXEC: " + execName)
         val ps = models(name).script(execName)
         if (modelRefCounts(name).longValue() > 0) {
             modelRefCounts(name).increment()
