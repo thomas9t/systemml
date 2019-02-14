@@ -19,10 +19,7 @@
 
 package org.apache.sysml.api.jmlc;
 
-import java.util.Collections;
-import java.util.HashMap;
-import java.util.HashSet;
-import java.util.List;
+import java.util.*;
 import java.util.Map.Entry;
 
 import org.apache.commons.lang.NotImplementedException;
@@ -132,12 +129,7 @@ public class PreparedScript implements ConfigurableAPI
 	}
 
 	public void clearPinnedData() {
-		for (String name : _inVarReuse.keySet()) {
-			Data mo = _inVarReuse.get(name);
-			if (mo instanceof MatrixObject)
-				((MatrixObject) mo).enableCleanup(true);
-			_inVarReuse.remove(name);
-		}
+		this._inVarReuse.clear();
 	}
 	
 	/**
