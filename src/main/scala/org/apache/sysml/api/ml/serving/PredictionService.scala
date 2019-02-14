@@ -310,7 +310,8 @@ object PredictionService extends PredictionJsonProtocol with AddModelJsonProtoco
                                               if (gpus != null) {
                                                   GPUContextPool.AVAILABLE_GPUS = gpus
                                                   for (ix <- 0 until GPUContextPool.getAvailableCount) {
-                                                      scripts += ("GPU" -> conn.prepareScript(
+                                                      System.err.println("ADDING SCRIPT FOR GPU: " + ix)
+                                                      scripts += (s"GPU${ix}" -> conn.prepareScript(
                                                           request.dml, inputs, Array[String](request.outputVarName),
                                                           true, true, ix))
                                                   }
