@@ -113,7 +113,8 @@ object ReferenceCountedModelManager extends ModelManager {
     def acquire(name: String, executor: JmlcExecutor) : PreparedScript = {
          if (PredictionService.__DEBUG__) println("ACQUIRING MODEL: " + name + " => " + modelRefCounts(name).longValue())
 
-        val ps = models(name).script(executor.getExecType)
+        val execName = executor.getName if executor.getExecType == "GPU" else executor.getExecType
+        val ps = models(name).script(execName)
         if (modelRefCounts(name).longValue() > 0) {
             modelRefCounts(name).increment()
             return ps.clone(false)
