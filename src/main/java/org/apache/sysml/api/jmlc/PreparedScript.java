@@ -78,7 +78,7 @@ public class PreparedScript implements ConfigurableAPI
 	private final DMLConfig _dmlconf;
 	private final CompilerConfig _cconf;
 
-	public String name;
+	public String name = "";
 
 	public void setName(String name) {
 		this.name = name;
