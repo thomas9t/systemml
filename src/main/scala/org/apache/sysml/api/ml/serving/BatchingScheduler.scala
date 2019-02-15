@@ -8,7 +8,7 @@ trait BatchingScheduler extends Scheduler {
 
     def getOptimalBatchSize(model : String, execType: String) : Int = {
         modelBatchSizes.putIfAbsent(execType, new ConcurrentHashMap[String,Int]())
-        modelBatchSizes.get(execType).putIfAbsent(model, 1)
+        modelBatchSizes.get(execType).putIfAbsent(model, 2)
         modelBatchSizes.get(execType).get(model)
     }
 
@@ -16,11 +16,14 @@ trait BatchingScheduler extends Scheduler {
                                     latency: Double,
                                     batchSize: Int,
                                     execType: String): Unit = {
-        val latencyObjective = latencyObjectives.get(model)
-        val prevSize = modelBatchSizes.get(execType).get(model)
-        val decreaseSize = if (prevSize > 10) max(floor(prevSize*0.90).toInt, 1) else max(prevSize-1, 1)
-        modelBatchSizes.get(execType).put(model,
-            if (latency < latencyObjective.toNanos) prevSize+1 else decreaseSize)
+        if (batchSize > 1) {
+            val latencyObjective = latencyObjectives.get(model)
+            val prevSize = modelBatchSizes.get(execType).get(model)
+            val decreaseSize = if (prevSize > 10) max(floor(prevSize*0.90).toInt, 1) else max(prevSize-1, 2)
+            val nextSize = if (latency < latencyObjective.toNanos) prevSize+1 else decreaseSize
+            println("BATCH SIZE: " + prevSize + " => " + nextSize + " (" + latency + "," + latencyObjective + ")")
+            modelBatchSizes.get(execType).put(model, nextSize)
+        }
     }
 
     def getExpectedExecutionTime(model: String, batchSize: Int, execType: String) : Long = {
