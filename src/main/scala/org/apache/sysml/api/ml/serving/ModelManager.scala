@@ -115,10 +115,10 @@ object ReferenceCountedModelManager extends ModelManager {
 
         val execName = if (executor.getExecType == "GPU") executor.getName else executor.getExecType
         val ps = models(name).script(execName)
-        if (modelRefCounts(name).longValue() > 0) {
-            modelRefCounts(name).increment()
-            return ps
-        }
+//        if (modelRefCounts(name).longValue() > 0) {
+//            modelRefCounts(name).increment()
+//            return ps
+//        }
 
         // otherwise we need to re-pin the weights, possibly reading them from disk
         val model = models(name)
