@@ -18,13 +18,9 @@ trait BatchingScheduler extends Scheduler {
                                     execType: String): Unit = {
         val latencyObjective = latencyObjectives.get(model)
         val prevSize = modelBatchSizes.get(execType).get(model)
-        if ((latency != latencyObjective.toNanos) && (batchSize == prevSize)) {
-            modelBatchSizes.synchronized({
-                modelBatchSizes.get(execType).put(model,
-                    if (latency < latencyObjective.toNanos) prevSize+2 else max(floor(prevSize*0.90).toInt, 1))
-            })
-        }
-
+        val decreaseSize = if (prevSize > 10) max(floor(prevSize*0.90).toInt, 1) else prevSize-1
+        modelBatchSizes.get(execType).put(model,
+            if (latency < latencyObjective.toNanos) prevSize+1 else decreaseSize)
     }
 
     def getExpectedExecutionTime(model: String, batchSize: Int, execType: String) : Long = {
@@ -42,7 +38,8 @@ trait BatchingScheduler extends Scheduler {
         val keyIterator = modelQueues.keys()
         while (keyIterator.hasMoreElements) {
             val name = keyIterator.nextElement()
-            if (modelQueues.get(name).size() > 0) {
+            val qsize = modelQueues.get(name).size()
+            if (qsize > 0) {
                 val nextRequest = modelQueues.get(name).peek()
                 assert(nextRequest != null, "Something is wrong. Next request should not be null")
 
@@ -50,7 +47,7 @@ trait BatchingScheduler extends Scheduler {
                     shortFuse += name
                 }
 
-                if (modelQueues.get(name).size() >= getOptimalBatchSize(name, execType)) {
+                if (qsize >= getOptimalBatchSize(name, execType) || qsize == 1) {
                     batchableModels += name
                 }
             }
@@ -65,7 +62,7 @@ trait BatchingScheduler extends Scheduler {
       */
     def checkShortFuse(request: SchedulingRequest) : Boolean = {
         val elapsed = System.nanoTime() - request.receivedTime
-        val shortFuse = elapsed >= (1.05*latencyObjectives.get(request.model.name).toNanos).toLong
+        val shortFuse = elapsed >= latencyObjectives.get(request.model.name).toNanos
         shortFuse
     }
 }

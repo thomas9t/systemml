@@ -122,7 +122,7 @@ class JmlcExecutor(scheduler: Scheduler, execType: String, name: String, gCtx: G
                 scheduler.modelManager.release(req.model.name)
                 scheduler.modelManager.releaseMemory(req.memUse)
                 val modelReleaseTime = System.nanoTime() - modelReleaseStart
-                scheduler.onCompleteCallback(req.model.name, stop - req.receivedTime, requests.length, execType)
+                scheduler.onCompleteCallback(req.model.name, System.nanoTime() - req.receivedTime, requests.length, execType)
                 if (req.statistics != null)
                     setStatistics(requests, start, batchingTime, execTime, modelAcquireTime, modelReleaseTime)
                 if (prevModel.nonEmpty)
