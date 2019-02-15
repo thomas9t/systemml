@@ -150,7 +150,7 @@ curl -u admin -XGET localhost:9000/shutdown
  */
 
 object PredictionService extends PredictionJsonProtocol with AddModelJsonProtocol {
-    val __DEBUG__ = false
+    val __DEBUG__ = true
 
     // val LOG = LogFactory.getLog(classOf[PredictionService].getName())
     val customConf = ConfigFactory.parseString("""
