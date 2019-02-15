@@ -266,12 +266,9 @@ public class ScriptExecutorUtils {
 
 		// Start timer
 		Statistics.startRunTimer();
-
-//		symbolTable.printVars();
-
+		
 		// Create execution context and attach registered outputs
 		ExecutionContext ec = ExecutionContextFactory.createContext(symbolTable, rtprog);
-		ec.name = symbolTable.name;
 		if(outputVariables != null)
 			ec.getVariables().setRegisteredOutputs(outputVariables);
 
