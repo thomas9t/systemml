@@ -118,7 +118,7 @@ object ReferenceCountedModelManager extends ModelManager {
         val ps = models(name).script(execName)
         if (modelRefCounts(name).longValue() > 0) {
             modelRefCounts(name).increment()
-            return ps.clone(false)
+            return ps
         }
 
         // otherwise we need to re-pin the weights, possibly reading them from disk
@@ -129,7 +129,7 @@ object ReferenceCountedModelManager extends ModelManager {
             modelRefCounts(name).increment()
         }
         if (PredictionService.__DEBUG__) println("DONE ACQUIRING MODEL: " + name)
-        ps.clone(false)
+        ps
     }
 
     override def disableCleanup(): Unit = {
@@ -146,7 +146,7 @@ object ReferenceCountedModelManager extends ModelManager {
             models(name).script.synchronized {
                 if (modelRefCounts(name).longValue() == 0) {
                     if (PredictionService.__DEBUG__) println("ACTUALLY RELEASING THE MODEL")
-                    models(name).script.foreach { x => x._2.clearPinnedData() }
+//                    models(name).script.foreach { x => x._2.clearPinnedData() }
                     if (PredictionService.__DEBUG__) println("CALLING RELEASE MEMORY")
                 }
             }
