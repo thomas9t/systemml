@@ -261,6 +261,11 @@ public class ScriptExecutorUtils {
 	public static ExecutionContext executeRuntimeProgram(Program rtprog, int statisticsMaxHeavyHitters,
 														 LocalVariableMap symbolTable, HashSet<String> outputVariables,
 														 SystemMLAPI api, List<GPUContext> gCtxs) {
+
+		System.err.println("BEGIN SYMBOL TABLE");
+		for (String varname : symbolTable.keySet()) {
+			System.err.println(varname);
+		}
 		boolean exceptionThrown = false;
 
 		// Start timer
