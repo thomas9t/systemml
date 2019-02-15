@@ -126,7 +126,7 @@ object ReferenceCountedModelManager extends ModelManager {
         model.synchronized {
             if (PredictionService.__DEBUG__) println("PINNING WEIGHTS")
             model.weightFiles.foreach(x => {
-                println("EXEC: " + execName + " SETTING VAR: " + x)
+                println("EXEC: " + execName + " SETTING VAR: " + x + " FOR MODEL: " + name)
                 ps.setMatrix(x._1, weightCache.getAsMatrixBlock(x._2), true)
             } )
             modelRefCounts(name).increment()

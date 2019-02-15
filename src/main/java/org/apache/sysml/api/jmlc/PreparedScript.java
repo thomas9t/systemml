@@ -78,6 +78,12 @@ public class PreparedScript implements ConfigurableAPI
 	private final DMLConfig _dmlconf;
 	private final CompilerConfig _cconf;
 
+	public String name;
+
+	public void setName(String name) {
+		this.name = name;
+	}
+
 	private boolean _isStatisticsEnabled = false;
 	private boolean _gatherMemStats = false;
 
