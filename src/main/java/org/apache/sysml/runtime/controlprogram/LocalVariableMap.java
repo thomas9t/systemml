@@ -48,6 +48,9 @@ public class LocalVariableMap implements Cloneable
 	//variable map data and id
 	private final HashMap<String, Data> localMap;
 	private final long localID;
+
+	public String name;
+
 	
 	//optional set of registered outputs
 	private HashSet<String> outputs = null;

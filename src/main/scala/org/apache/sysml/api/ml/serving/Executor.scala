@@ -107,8 +107,6 @@ class JmlcExecutor(scheduler: Scheduler, execType: String, name: String, gCtx: G
                 val script = scheduler.modelManager.acquire(req.model.name, this)
                 val modelAcquireTime = System.nanoTime() - modelAcquireStart
                 script.setMatrix(req.model.inputVarName, batchedMatrixData, false)
-                if (gCtx != null)
-                    script.setGpuContext(gCtx)
                 if (PredictionService.__DEBUG__)
                     println("BEGIN EXEC: " + req.model.name + " ON " + name)
                 val execStart = System.nanoTime()
@@ -119,7 +117,7 @@ class JmlcExecutor(scheduler: Scheduler, execType: String, name: String, gCtx: G
                 responses = BatchingUtils.unbatchRequests(requests, res)
                 val stop = System.nanoTime()
                 val modelReleaseStart = System.nanoTime()
-                scheduler.modelManager.release(req.model.name)
+//                scheduler.modelManager.release(req.model.name)
                 scheduler.modelManager.releaseMemory(req.memUse)
                 val modelReleaseTime = System.nanoTime() - modelReleaseStart
                 scheduler.onCompleteCallback(req.model.name, System.nanoTime() - req.receivedTime, requests.length, execType)

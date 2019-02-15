@@ -261,6 +261,7 @@ public class ScriptExecutorUtils {
 	public static ExecutionContext executeRuntimeProgram(Program rtprog, int statisticsMaxHeavyHitters,
 														 LocalVariableMap symbolTable, HashSet<String> outputVariables,
 														 SystemMLAPI api, List<GPUContext> gCtxs) {
+
 		boolean exceptionThrown = false;
 
 		// Start timer

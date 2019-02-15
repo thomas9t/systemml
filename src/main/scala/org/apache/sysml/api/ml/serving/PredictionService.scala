@@ -44,8 +44,10 @@ import org.apache.sysml.runtime.io.IOUtilFunctions
 import org.apache.sysml.api.jmlc.Connection
 import org.apache.sysml.api.jmlc.PreparedScript
 import org.apache.sysml.conf.ConfigurationManager
+import org.apache.sysml.runtime.instructions.gpu.context.GPUContextPool
 import org.apache.sysml.runtime.matrix.MatrixCharacteristics
 import org.apache.sysml.runtime.util.DataConverter
+
 import scala.concurrent.ExecutionContext
 
 // format: can be file, binary, csv, ijv, jpeg, ...
@@ -240,8 +242,8 @@ object PredictionService extends PredictionJsonProtocol with AddModelJsonProtoco
                                 validate(models.contains(request.name), "The model is not available.") {
                                     try {
                                         currNumRequests.increment()
-                                        System.err.println("CURR NUM REQUESTS: " + currNumRequests)
-                                        System.err.println("CURR NUM THREADS: " + Thread.activeCount())
+//                                        System.err.println("CURR NUM REQUESTS: " + currNumRequests)
+//                                        System.err.println("CURR NUM THREADS: " + Thread.activeCount())
                                         val start = System.nanoTime()
                                         val processedRequest = processPredictionRequest(request)
                                         val deserializationTime = System.nanoTime() - start
@@ -305,10 +307,15 @@ object PredictionService extends PredictionJsonProtocol with AddModelJsonProtoco
                                                   request.dml, inputs, Array[String](request.outputVarName))
                                               var scripts = Map("CPU" -> scriptCpu)
 
-                                              if (gpus != null)
-                                                  scripts += ("GPU" -> conn.prepareScript(
-                                                    request.dml, inputs, Array[String](request.outputVarName),
-                                                    true, true, 0))
+                                              if (gpus != null) {
+                                                  GPUContextPool.AVAILABLE_GPUS = gpus
+                                                  for (ix <- 0 until GPUContextPool.getAvailableCount) {
+                                                      System.err.println("ADDING SCRIPT FOR GPU: " + ix)
+                                                      scripts += (s"GPU${ix}" -> conn.prepareScript(
+                                                          request.dml, inputs, Array[String](request.outputVarName),
+                                                          true, true, ix))
+                                                  }
+                                              }
 
                                               // b = cov(x,y) / var(x)
                                               // a = mean(y) - b*mean(x)
