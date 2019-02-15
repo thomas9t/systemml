@@ -84,7 +84,7 @@ public class AggregateUnaryCPInstruction extends UnaryCPInstruction
 		{
 			//check existence of input variable
 			if( !ec.getVariables().keySet().contains(input1.getName()) )
-				throw new DMLRuntimeException("Variable '"+input1.getName()+"' does not exist. NAME: " + ec.name);
+				throw new DMLRuntimeException("Variable '"+input1.getName()+"' does not exist.");
 			
 			//get meta data information
 			long rval = -1;

@@ -115,23 +115,20 @@ object ReferenceCountedModelManager extends ModelManager {
 
         val execName = if (executor.getExecType == "GPU") executor.getName else executor.getExecType
         val ps = models(name).script(execName)
-//        if (modelRefCounts(name).longValue() > 0) {
-//            modelRefCounts(name).increment()
-//            return ps
-//        }
+        if (modelRefCounts(name).longValue() > 0 && ps.hasPinnedData) {
+            modelRefCounts(name).increment()
+            return ps.clone(false)
+        }
 
         // otherwise we need to re-pin the weights, possibly reading them from disk
         val model = models(name)
         model.synchronized {
             if (PredictionService.__DEBUG__) println("PINNING WEIGHTS")
-            model.weightFiles.foreach(x => {
-//                println("EXEC: " + execName + " SETTING VAR: " + x + " FOR MODEL: " + name)
-                ps.setMatrix(x._1, weightCache.getAsMatrixBlock(x._2), true)
-            } )
+            model.weightFiles.foreach(x => ps.setMatrix(x._1, weightCache.getAsMatrixBlock(x._2), true))
             modelRefCounts(name).increment()
         }
         if (PredictionService.__DEBUG__) println("DONE ACQUIRING MODEL: " + name)
-        ps
+        ps.clone(false)
     }
 
     override def disableCleanup(): Unit = {
