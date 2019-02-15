@@ -117,7 +117,7 @@ class JmlcExecutor(scheduler: Scheduler, execType: String, name: String, gCtx: G
                 responses = BatchingUtils.unbatchRequests(requests, res)
                 val stop = System.nanoTime()
                 val modelReleaseStart = System.nanoTime()
-                scheduler.modelManager.release(req.model.name)
+//                scheduler.modelManager.release(req.model.name)
                 scheduler.modelManager.releaseMemory(req.memUse)
                 val modelReleaseTime = System.nanoTime() - modelReleaseStart
                 scheduler.onCompleteCallback(req.model.name, stop - req.receivedTime, requests.length, execType)
