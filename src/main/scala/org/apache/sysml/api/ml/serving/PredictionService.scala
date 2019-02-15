@@ -241,6 +241,7 @@ object PredictionService extends PredictionJsonProtocol with AddModelJsonProtoco
                             entity(as[PredictionRequestExternal]) { request =>
                                 validate(models.contains(request.name), "The model is not available.") {
                                     try {
+                                        System.err.println("REQUEST RECEIVED")
                                         currNumRequests.increment()
 //                                        System.err.println("CURR NUM REQUESTS: " + currNumRequests)
 //                                        System.err.println("CURR NUM THREADS: " + Thread.activeCount())

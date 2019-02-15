@@ -266,7 +266,7 @@ public class ScriptExecutorUtils {
 
 		// Start timer
 		Statistics.startRunTimer();
-		
+
 		// Create execution context and attach registered outputs
 		ExecutionContext ec = ExecutionContextFactory.createContext(symbolTable, rtprog);
 		if(outputVariables != null)
