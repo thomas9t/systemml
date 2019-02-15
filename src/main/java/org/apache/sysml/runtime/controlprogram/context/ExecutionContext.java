@@ -98,8 +98,6 @@ public class ExecutionContext {
 			_dbState = DebugState.getInstance();
 		}
 	}
-
-	public void setName(String name) { this._name = name; }
 	
 	public Program getProgram(){
 		return _prog;

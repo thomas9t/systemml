@@ -400,6 +400,7 @@ class DataWrapper {
 					_mb.write(os);
 				}
 				_cache.persistedKeys.add(_key);
+				System.err.println("Writing value (MatrixBlock of size " + getSize() + " bytes) for the key " + _key + " to disk" + debugSuffix);
 				if(PersistentLRUCache.LOG.isDebugEnabled())
 					PersistentLRUCache.LOG.debug("Writing value (MatrixBlock of size " + getSize() + " bytes) for the key " + _key + " to disk" + debugSuffix);
 			}
