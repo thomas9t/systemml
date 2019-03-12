@@ -110,7 +110,7 @@ trait Scheduler {
       * @param batchSize The number of examples in the batch
       * @param execType The device type on which the batch was executed
       */
-    def onCompleteCallback(model: String, latency: Double, batchSize: Int, execType: String) : Unit
+    def onCompleteCallback(model: String, latency: Double, batchSize: Int, execType: String, execTime: Long) : Unit
 
     val requestQueue = new LinkedBlockingDeque[SchedulingRequest]()
     val globalSchedulingQueues = new ConcurrentHashMap[String, BatchQueue]()

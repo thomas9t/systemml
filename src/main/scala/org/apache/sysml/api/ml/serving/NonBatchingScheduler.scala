@@ -47,5 +47,5 @@ object NonBatchingScheduler extends Scheduler {
         }
     }
 
-    override def onCompleteCallback(model: String, latency: Double, batchSize: Int, execType: String): Unit = {}
+    override def onCompleteCallback(model: String, latency: Double, batchSize: Int, execType: String, execTime: Long): Unit = {}
 }

@@ -42,9 +42,8 @@ object BasicBatchingScheduler extends BatchingScheduler {
       * @return The model to schedule next
       */
     def getNextModelAndBatchSize(models : Iterable[String], execType: String) : (String, Int) = {
-        val nextModel = models.map(
-            m => ((getExpectedExecutionTime(m, getOptimalBatchSize(m, execType), execType)), m)
-        ).minBy(x => x._1)._2
+        val nextModel = models.map(m =>
+            (getOptimalBatchSize(m, execType)*getExpectedExecutionTime(m), m)).minBy(x => x._1)._2
 
         val nextBatchSize = min(modelQueues.get(nextModel).size(),
             getOptimalBatchSize(nextModel, execType))

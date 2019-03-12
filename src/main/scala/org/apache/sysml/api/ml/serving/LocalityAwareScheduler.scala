@@ -45,8 +45,7 @@ object ExecutorQueueManager extends Runnable {
                                 if (PredictionService.__DEBUG__)
                                     println("ENQUEUING: " + nextBatchSize + " FOR: " + m + " ONTO: " + queue.getName)
                                 val nextBatch = Batch(
-                                    nextBatchSize, _scheduler.getExpectedExecutionTime(
-                                        m, nextBatchSize, queue.getExecType),
+                                    nextBatchSize, nextBatchSize*_scheduler.getExpectedExecutionTime(m),
                                     nextRequest.receivedTime - System.nanoTime(), nextRequest.model.name)
                                 queue.enqueue(nextBatch)
                                 if (PredictionService.__DEBUG__)

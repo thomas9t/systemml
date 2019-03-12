@@ -115,12 +115,15 @@ class JmlcExecutor(scheduler: Scheduler, execType: String, name: String, gCtx: G
                 if (PredictionService.__DEBUG__)
                     println("DONE EXEC: " + req.model.name + " ON " + name)
                 responses = BatchingUtils.unbatchRequests(requests, res)
-                val stop = System.nanoTime()
+
                 val modelReleaseStart = System.nanoTime()
-//                scheduler.modelManager.release(req.model.name)
+                scheduler.modelManager.release(req.model.name)
                 scheduler.modelManager.releaseMemory(req.memUse)
                 val modelReleaseTime = System.nanoTime() - modelReleaseStart
-                scheduler.onCompleteCallback(req.model.name, System.nanoTime() - req.receivedTime, requests.length, execType)
+                scheduler.onCompleteCallback(req.model.name,
+                                             System.nanoTime() - req.receivedTime,
+                                             requests.length,
+                                             execType, System.nanoTime() - start)
                 if (req.statistics != null)
                     setStatistics(requests, start, batchingTime, execTime, modelAcquireTime, modelReleaseTime)
                 if (prevModel.nonEmpty)
