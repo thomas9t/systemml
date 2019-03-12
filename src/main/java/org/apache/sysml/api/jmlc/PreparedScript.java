@@ -78,7 +78,7 @@ public class PreparedScript implements ConfigurableAPI
 	private final DMLConfig _dmlconf;
 	private final CompilerConfig _cconf;
 
-	public String name;
+	public String name = "";
 
 	public void setName(String name) {
 		this.name = name;
@@ -339,6 +339,8 @@ public class PreparedScript implements ConfigurableAPI
 			_inVarReuse.put(varname, mo);
 		}
 	}
+
+	public boolean hasPinnedData() { return _inVarReuse.keySet().size() > 0; }
 
 	/**
 	 * Binds a frame object to a registered input variable.

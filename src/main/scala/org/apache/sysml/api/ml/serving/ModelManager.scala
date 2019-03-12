@@ -114,9 +114,8 @@ object ReferenceCountedModelManager extends ModelManager {
          if (PredictionService.__DEBUG__) println("ACQUIRING MODEL: " + name + " => " + modelRefCounts(name).longValue())
 
         val execName = if (executor.getExecType == "GPU") executor.getName else executor.getExecType
-        System.err.println("GOT PS FOR EXEC: " + execName)
         val ps = models(name).script(execName)
-        if (modelRefCounts(name).longValue() > 0) {
+        if (modelRefCounts(name).longValue() > 0 && ps.hasPinnedData) {
             modelRefCounts(name).increment()
             return ps.clone(false)
         }
@@ -125,10 +124,7 @@ object ReferenceCountedModelManager extends ModelManager {
         val model = models(name)
         model.synchronized {
             if (PredictionService.__DEBUG__) println("PINNING WEIGHTS")
-            model.weightFiles.foreach(x => {
-                println("EXEC: " + execName + " SETTING VAR: " + x + " FOR MODEL: " + name)
-                ps.setMatrix(x._1, weightCache.getAsMatrixBlock(x._2), true)
-            } )
+            model.weightFiles.foreach(x => ps.setMatrix(x._1, weightCache.getAsMatrixBlock(x._2), true))
             modelRefCounts(name).increment()
         }
         if (PredictionService.__DEBUG__) println("DONE ACQUIRING MODEL: " + name)

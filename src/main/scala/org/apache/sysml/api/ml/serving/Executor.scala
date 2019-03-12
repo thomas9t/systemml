@@ -101,10 +101,12 @@ class JmlcExecutor(scheduler: Scheduler, execType: String, name: String, gCtx: G
                 val batchedMatrixData = BatchingUtils.batchRequests(requests)
                 val batchingTime = System.nanoTime() - start
                 val req = requests(0)
+                println("EXECUTE: " + req.model.name + " BATCH SIZE: " + batchedMatrixData.getNumRows)
                 if (PredictionService.__DEBUG__)
                     println("BEGIN PROCESS: " + req.model.name + " ON " + name)
                 val modelAcquireStart = System.nanoTime()
                 val script = scheduler.modelManager.acquire(req.model.name, this)
+                script.setName(this.getName)
                 val modelAcquireTime = System.nanoTime() - modelAcquireStart
                 script.setMatrix(req.model.inputVarName, batchedMatrixData, false)
                 if (PredictionService.__DEBUG__)

@@ -75,6 +75,8 @@ public class ExecutionContext {
 	//debugging (optional)
 	protected DebugState _dbState = null;
 
+	public String name = "";
+
 	/**
 	 * List of {@link GPUContext}s owned by this {@link ExecutionContext}
 	 */
@@ -98,7 +100,7 @@ public class ExecutionContext {
 			_dbState = DebugState.getInstance();
 		}
 	}
-	
+
 	public Program getProgram(){
 		return _prog;
 	}
