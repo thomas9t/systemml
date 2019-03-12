@@ -39,7 +39,7 @@ import org.apache.sysml.runtime.controlprogram.parfor.opt.CostEstimatorHops;
  * Note: Currently, we support expressions in function arguments along with function calls
  * in expressions with single outputs, leaving multiple outputs handling as it is.
  */
-public class FunctionOp extends Hop
+public class FunctionOp extends MultiThreadedHop
 {
 	public enum FunctionType{
 		DML,
@@ -253,8 +253,14 @@ public class FunctionOp extends Hop
 			tmp.add( in.constructLops() );
 		
 		//construct function call
+		int numThreads = 0;
+		if(getFunctionType() == FunctionType.MULTIRETURN_BUILTIN && isBuiltinFunction() && et == ExecType.CP &&
+				(getFunctionName().equalsIgnoreCase("lstm") || getFunctionName().equalsIgnoreCase("lstm_backward"))) {
+			numThreads = OptimizerUtils.getConstrainedNumThreads(_maxNumThreads);
+		}
+		
 		Lop fcall = _singleOutFun ? new FunctionCallCPSingle( tmp, _fnamespace, _fname, et ) :
-			new FunctionCallCP(tmp, _fnamespace, _fname, _inputNames, _outputNames, _outputHops, et);
+			new FunctionCallCP(tmp, _fnamespace, _fname, _inputNames, _outputNames, _outputHops, et, numThreads);
 		setLineNumbers(fcall);
 		setLops(fcall);
 		
@@ -274,18 +280,37 @@ public class FunctionOp extends Hop
 	{
 		checkAndSetForcedPlatform();
 		
-		if ( getFunctionType() == FunctionType.MULTIRETURN_BUILTIN ) {
-			boolean isBuiltinFunction = isBuiltinFunction();
+		if(getFunctionType() == FunctionType.MULTIRETURN_BUILTIN && isBuiltinFunction() &&
+			(getFunctionName().equalsIgnoreCase("lstm") || getFunctionName().equalsIgnoreCase("lstm_backward"))) {
+			ExecType REMOTE = OptimizerUtils.isSparkExecutionMode() ? ExecType.SPARK : ExecType.MR;
+			
+			if( _etypeForced != null ) {
+				_etype = _etypeForced;
+			}
+			else {	
+				if ( OptimizerUtils.isMemoryBasedOptLevel() ) {
+					_etype = findExecTypeByMemEstimate();
+				}
+				else {
+					_etype = REMOTE;
+				}
+				
+				//check for valid CP dimensions and matrix size
+				checkAndSetInvalidCPDimsAndSize();
+			}
+			
+			// Since lstm builtin functions are not supported on Spark or MR.
+			_etype = _etype == REMOTE ?  ExecType.CP : _etype;
+			
+			//mark for recompile (forever)
+			setRequiresRecompileIfNecessary();
+		}
+		else if ( getFunctionType() == FunctionType.MULTIRETURN_BUILTIN ) {
 			// check if there is sufficient memory to execute this function
-			if(isBuiltinFunction && getFunctionName().equalsIgnoreCase("transformencode") ) {
+			if(isBuiltinFunction() && getFunctionName().equalsIgnoreCase("transformencode") ) {
 				_etype = ((_etypeForced==ExecType.SPARK 
 					|| (getMemEstimate() >= OptimizerUtils.getLocalMemBudget()
 						&& OptimizerUtils.isSparkExecutionMode())) ? ExecType.SPARK : ExecType.CP);
-			}
-			else if(isBuiltinFunction && (getFunctionName().equalsIgnoreCase("lstm") || getFunctionName().equalsIgnoreCase("lstm_backward"))) {
-				if(!ConfigurationManager.isGPU())
-					throw new RuntimeException("The function " + getFunctionName() + " is only supported on GPU.");
-				_etype = ExecType.GPU;
 			}
 			else {
 				// Since the memory estimate is only conservative, do not throw
