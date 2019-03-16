@@ -35,6 +35,7 @@ trait BatchingScheduler extends Scheduler {
     }
 
     def getExpectedExecutionTime(model: String) : Long = {
+        expectedExecutionTimes.putIfAbsent(model, (new LongAdder(), new LongAdder()))
         val execTime = expectedExecutionTimes.get(model)
         val totalNumRequests = execTime._2.longValue()
         if  (totalNumRequests > 0) execTime._1.longValue() / execTime._2.longValue() else 0
