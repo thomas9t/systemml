@@ -61,7 +61,7 @@ trait BatchingScheduler extends Scheduler {
                     shortFuse += name
                 }
 
-                if (qsize >= getOptimalBatchSize(name, execType) || qsize == 1) {
+                if (qsize >= getOptimalBatchSize(name, execType)) {
                     batchableModels += name
                 }
             }

@@ -4,28 +4,23 @@ import java.util
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.LongAdder
 
+import org.apache.commons.logging.{Log, LogFactory}
 import org.apache.sysml.api.jmlc.{Connection, PreparedScript}
 import org.apache.sysml.runtime.matrix.data.MatrixBlock
 import org.apache.sysml.utils.PersistentLRUCache
 
 trait ModelManager {
-
+    val LOG: Log = LogFactory.getLog(classOf[ModelManager].getName)
     var modelLocality = new ConcurrentHashMap[String, util.ArrayList[JmlcExecutor]]()
-
     val conn: Connection = new Connection()
-
     val availableMemory = new LongAdder
-
     var totalMemory = 0L
-
     var cleanupEnabled = true
-
     var memCheckEnabled = true
-
     var models: Map[String, Model] = Map()
 
     def setAvailableMemory(memBytes: Long) : Unit = {
-        if (PredictionService.__DEBUG__) println("SETTING TOTAL MEMORY AVAILABLE TO: " + memBytes)
+        LOG.info("Setting total memory to: " + memBytes + " bytes")
         totalMemory = memBytes
         availableMemory.reset()
         availableMemory.add(memBytes)
@@ -37,26 +32,25 @@ trait ModelManager {
         // if memory checking is not enabled just always say they get the memory
         if (!memCheckEnabled || bytes == 0)
             return bytes
+        LOG.debug("Requested: " + bytes)
 
         // otherwise check to see if there is enough memory to meet the request
         if (bytes <= availableMemory.longValue()) {
-            this.synchronized {
-                if (bytes <= availableMemory.longValue()) {
-                    if (PredictionService.__DEBUG__) println("GRANTED: " + bytes + "/" + availableMemory)
-                    availableMemory.add(-1 * bytes)
-                    return bytes
-                }
-            }
+            availableMemory.add(-1 * bytes)
+            LOG.debug("Granted: " + bytes + "/" + availableMemory.longValue())
+            return bytes
         }
         // not enough memory available :(
+
+        LOG.debug("Insufficient memory. Request was not granted")
         -1
     }
 
     def releaseMemory(bytes: Long) : Unit = {
         if (bytes > 0) {
-            if (PredictionService.__DEBUG__) println("RELEASING: " + bytes)
+            LOG.debug("Releasing: " + bytes)
             availableMemory.add(bytes)
-            if (PredictionService.__DEBUG__) println("MEMORY IS NOW: " + availableMemory.longValue())
+            LOG.debug("Available memory is now: " + availableMemory.longValue())
         }
     }
 
@@ -111,7 +105,7 @@ object ReferenceCountedModelManager extends ModelManager {
     def isCached(name: String) : Boolean = { modelRefCounts(name).longValue() > 0 }
 
     def acquire(name: String, executor: JmlcExecutor) : PreparedScript = {
-         if (PredictionService.__DEBUG__) println("ACQUIRING MODEL: " + name + " => " + modelRefCounts(name).longValue())
+         LOG.debug("Acquiring model: " + name + " Ref count: " + modelRefCounts(name).longValue())
 
         val execName = if (executor.getExecType == "GPU") executor.getName else executor.getExecType
         val ps = models(name).script(execName)
@@ -123,30 +117,28 @@ object ReferenceCountedModelManager extends ModelManager {
         // otherwise we need to re-pin the weights, possibly reading them from disk
         val model = models(name)
         model.synchronized {
-            if (PredictionService.__DEBUG__) println("PINNING WEIGHTS")
+            LOG.debug("Pinning weights for: " + name)
             model.weightFiles.foreach(x => ps.setMatrix(x._1, weightCache.getAsMatrixBlock(x._2), true))
             modelRefCounts(name).increment()
         }
-        if (PredictionService.__DEBUG__) println("DONE ACQUIRING MODEL: " + name)
+        LOG.debug("Done acquiring model: " + name)
         ps.clone(false)
     }
 
     override def disableCleanup(): Unit = {
         super.disableCleanup()
-        if (PredictionService.__DEBUG__) println("CLEANUP IS DISABLED")
+        LOG.debug("Cleanup is disabled")
     }
 
     def release(name: String) : Unit = {
         modelRefCounts(name).decrement()
         releaseMemory(models(name).weightMem)
 
-        if (PredictionService.__DEBUG__) println("RELEASE MODEL: " + name + " => " + modelRefCounts(name).longValue())
+        LOG.debug("Releasing model: " + name + " Ref count: " + modelRefCounts(name).longValue())
         if (modelRefCounts(name).longValue() == 0) {
             models(name).script.synchronized {
                 if (modelRefCounts(name).longValue() == 0) {
-                    if (PredictionService.__DEBUG__) println("ACTUALLY RELEASING THE MODEL")
                     models(name).script.foreach { x => x._2.clearPinnedData() }
-                    if (PredictionService.__DEBUG__) println("CALLING RELEASE MEMORY")
                 }
             }
         }

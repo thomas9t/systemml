@@ -25,6 +25,8 @@ import java.util.List
 
 import org.apache.sysml.runtime.instructions.gpu.context.GPUContextPool
 import org.apache.sysml.runtime.instructions.gpu.context.GPUContext
+import org.apache.commons.logging.Log
+import org.apache.commons.logging.LogFactory
 
 import scala.concurrent.ExecutionContext
 
@@ -37,15 +39,15 @@ case class SchedulingRequest(request: PredictionRequest,
                              var memUse: Long = 0)
 
 trait Scheduler {
+    val LOG: Log = LogFactory.getLog(classOf[Scheduler].getName)
     var executorService: ExecutorService = _
     protected var _statistics = true
-//    implicit val ec : ExecutionContext = ExecutionContext.fromExecutor(Executors.newFixedThreadPool(2000))
     implicit val ec = ExecutionContext.global
     var executorTypes = Array[String]()
     var modelManager = ReferenceCountedModelManager
 
     def start(numCores: Int, cpuMemoryBudgetInBytes: Long, gpus: String): Unit = {
-        System.err.println(s"Starting Scheduler with ${numCores} CPUs and ${gpus} GPUs")
+        LOG.info(s"Starting Scheduler with ${numCores} CPUs and ${gpus} GPUs")
         var numGpus = 0
         var gCtxs: List[GPUContext] = null
         if (gpus != null) {
@@ -62,7 +64,7 @@ trait Scheduler {
         if (numGpus > 0)
             executorTypes :+= "GPU"
 
-        if (PredictionService.__DEBUG__) println("STARTING SCHEDULER WITH: " + numCores + " CPU => " + numGpus + " GPUS")
+        LOG.debug("STARTING SCHEDULER WITH: " + numCores + " CPU => " + numGpus + " GPUS")
         for (i <- 0 until numCores) {
             val exec = new JmlcExecutor(this, "CPU", "CPU" + i, null)
             executorQueues.put(exec, new BatchQueue("CPU", "CPU" + i))

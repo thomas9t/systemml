@@ -21,6 +21,7 @@ package org.apache.sysml.api.ml.serving
 import java.util.concurrent.PriorityBlockingQueue
 import java.util.concurrent.atomic.LongAdder
 
+import org.apache.commons.logging.{Log, LogFactory}
 import org.apache.sysml.runtime.instructions.gpu.context.GPUContext
 
 
@@ -31,6 +32,7 @@ case class Batch(size: Int, expectedTime: Long, priority: Double, modelName: Str
 }
 
 class BatchQueue(execType: String, name: String) extends PriorityBlockingQueue[Batch] {
+    val LOG: Log = LogFactory.getLog(classOf[BatchQueue].getName)
     private val expectedExecutionTime = new LongAdder()
     private var prevFirstRequest= Map[String, SchedulingRequest]()
 
@@ -43,8 +45,7 @@ class BatchQueue(execType: String, name: String) extends PriorityBlockingQueue[B
     def getPrevRequest(name: String) : SchedulingRequest = { prevFirstRequest.getOrElse(name, null) }
 
     def enqueue(batch: Batch) : Unit = {
-        if (PredictionService.__DEBUG__)
-            println("ENQUEUING ONTO: " + getName)
+        LOG.debug("ENQUEUING ONTO: " + getName)
         synchronized {
             this.add(batch)
             expectedExecutionTime.add(batch.expectedTime)
@@ -68,7 +69,7 @@ class BatchQueue(execType: String, name: String) extends PriorityBlockingQueue[B
 
 class JmlcExecutor(scheduler: Scheduler, execType: String, name: String, gCtx: GPUContext) extends Runnable {
     @volatile protected var _shouldShutdown: Boolean = false
-
+    val LOG: Log = LogFactory.getLog(classOf[JmlcExecutor].getName)
     var prevModel = ""
 
     def shutdown(): Unit = {
@@ -101,21 +102,18 @@ class JmlcExecutor(scheduler: Scheduler, execType: String, name: String, gCtx: G
                 val batchedMatrixData = BatchingUtils.batchRequests(requests)
                 val batchingTime = System.nanoTime() - start
                 val req = requests(0)
-                println("EXECUTE: " + req.model.name + " BATCH SIZE: " + batchedMatrixData.getNumRows)
-                if (PredictionService.__DEBUG__)
-                    println("BEGIN PROCESS: " + req.model.name + " ON " + name)
+                LOG.info("EXECUTE: " + req.model.name + " BATCH SIZE: " + batchedMatrixData.getNumRows)
+                LOG.debug("BEGIN PROCESS: " + req.model.name + " ON " + name)
                 val modelAcquireStart = System.nanoTime()
                 val script = scheduler.modelManager.acquire(req.model.name, this)
                 script.setName(this.getName)
                 val modelAcquireTime = System.nanoTime() - modelAcquireStart
                 script.setMatrix(req.model.inputVarName, batchedMatrixData, false)
-                if (PredictionService.__DEBUG__)
-                    println("BEGIN EXEC: " + req.model.name + " ON " + name)
+                LOG.debug("BEGIN EXEC: " + req.model.name + " ON " + name)
                 val execStart = System.nanoTime()
                 val res = script.executeScript().getMatrixBlock(req.model.outputVarName)
                 val execTime = System.nanoTime() - execStart
-                if (PredictionService.__DEBUG__)
-                    println("DONE EXEC: " + req.model.name + " ON " + name)
+                LOG.debug("DONE EXEC: " + req.model.name + " ON " + name)
                 responses = BatchingUtils.unbatchRequests(requests, res)
 
                 val modelReleaseStart = System.nanoTime()
@@ -133,8 +131,7 @@ class JmlcExecutor(scheduler: Scheduler, execType: String, name: String, gCtx: G
                 scheduler.modelManager.setModelLocality(req.model.name, this)
                 prevModel = req.model.name
 
-                if (PredictionService.__DEBUG__)
-                    println("DONE PROCESS: " + req.model.name + " ON " + name)
+                LOG.debug("DONE PROCESS: " + req.model.name + " ON " + name)
             } catch {
                 case e: Exception => println("AN ERROR OCCURRED: " + e.getMessage + e.printStackTrace())
             }

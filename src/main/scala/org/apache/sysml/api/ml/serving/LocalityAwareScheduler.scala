@@ -2,17 +2,18 @@ package org.apache.sysml.api.ml.serving
 
 import java.util.concurrent.{ConcurrentHashMap, CountDownLatch}
 
+import org.apache.commons.logging.{Log, LogFactory}
+
 import scala.concurrent.Future
 import scala.math.min
-import scala.concurrent.duration.Duration
 
 object ExecutorQueueManager extends Runnable {
+    val LOG: Log = LogFactory.getLog(ExecutorQueueManager.getClass.getName)
     var _shutDown = false
     var _scheduler = LocalityAwareScheduler
     def shutdown(): Unit = { _shutDown = true }
 
     override def run() : Unit = {
-        if (PredictionService.__DEBUG__) println("Hi From Executor Queue Manager!")
         while (!_shutDown) {
             _scheduler.dummyResponse.synchronized {
                 val schedulableModels = _scheduler.executorTypes.map(
@@ -41,15 +42,13 @@ object ExecutorQueueManager extends Runnable {
                             val qsize = _scheduler.modelQueues.get(m).size()
                             if (nextRequest ne queue.getPrevRequest(m)) {
                                 val nextBatchSize = min(qsize, _scheduler.getOptimalBatchSize(m, queue.getExecType))
-                                assert(nextBatchSize > 0, "Something is wrong - batch size should not be zero")
-                                if (PredictionService.__DEBUG__)
-                                    println("ENQUEUING: " + nextBatchSize + " FOR: " + m + " ONTO: " + queue.getName)
+                                assert(nextBatchSize > 0, "An error occurred - batch size should not be zero")
+                                LOG.debug("Enqueuing: " + nextBatchSize + " for: " + m + " onto: " + queue.getName)
                                 val nextBatch = Batch(
                                     nextBatchSize, nextBatchSize*_scheduler.getExpectedExecutionTime(m),
                                     nextRequest.receivedTime - System.nanoTime(), nextRequest.model.name)
                                 queue.enqueue(nextBatch)
-                                if (PredictionService.__DEBUG__)
-                                    println("DONE WITH ENQUEUING")
+                                LOG.debug("Batch enqueued onto: " + queue.getName)
                             }
                             queue.updatePrevRequest(m, nextRequest) } )
                         }
@@ -107,8 +106,7 @@ object LocalityAwareScheduler extends BatchingScheduler {
         if (localQueue.size() > 0 || globalDiskQueue.size() > 0 || globalMemQueue.size() > 0) {
             dummyResponse.synchronized {
                 if (localQueue.size() > 0 || globalDiskQueue.size() > 0 || globalMemQueue.size() > 0) {
-                    if (PredictionService.__DEBUG__)
-                        println("BEGIN SCHEDULING FOR: " + executor.getName)
+                    LOG.debug("Begin scheduling for executor: " + executor.getName)
                     val execMode = Array[(BatchQueue, ExecMode.MODE)](
                         (localQueue, ExecMode.LOCAL),
                         (globalDiskQueue, ExecMode.GLOBAL_DISK),
@@ -151,8 +149,7 @@ object LocalityAwareScheduler extends BatchingScheduler {
                         }
 
                         // now we can actually take the original requests out of the model queues
-                        if (PredictionService.__DEBUG__)
-                            println("SCHEDULING: " + numToDequeue + " FOR " + batch.modelName + " ON " + executor.getName)
+                        LOG.debug("Scheduling: " + numToDequeue + " for " + batch.modelName + " on " + executor.getName)
                         for (_ <- 0 until numToDequeue) {
                             val nextRequest = mqueue.poll()
                             assert(nextRequest != null, "Something is wrong - request should not be null!")
@@ -166,8 +163,7 @@ object LocalityAwareScheduler extends BatchingScheduler {
                             }
                             ret :+= nextRequest
                         }
-                        if (PredictionService.__DEBUG__)
-                            println("DONE SCHEDULING")
+                        LOG.debug("Done scheduling on: " + executor.getName)
                     }
                 }
             }

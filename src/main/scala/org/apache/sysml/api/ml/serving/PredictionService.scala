@@ -47,6 +47,8 @@ import org.apache.sysml.conf.ConfigurationManager
 import org.apache.sysml.runtime.instructions.gpu.context.GPUContextPool
 import org.apache.sysml.runtime.matrix.MatrixCharacteristics
 import org.apache.sysml.runtime.util.DataConverter
+import org.apache.commons.logging.Log
+import org.apache.commons.logging.LogFactory
 
 import scala.concurrent.ExecutionContext
 
@@ -152,7 +154,7 @@ curl -u admin -XGET localhost:9000/shutdown
 object PredictionService extends PredictionJsonProtocol with AddModelJsonProtocol {
     val __DEBUG__ = false
 
-    // val LOG = LogFactory.getLog(classOf[PredictionService].getName())
+    val LOG = LogFactory.getLog(classOf[PredictionService].getName)
     val customConf = ConfigFactory.parseString("""
         akka.http.server.idle-timeout=infinite
         akka.http.client.idle-timeout=infinite
@@ -229,7 +231,7 @@ object PredictionService extends PredictionJsonProtocol with AddModelJsonProtoco
         scheduler = SchedulerFactory.getScheduler(schedulerType)
         val maxMemory = Runtime.getRuntime.maxMemory()  // total memory is just what the JVM has currently allocated
 
-        println("TOTAL MEMORY: " + maxMemory)
+        LOG.info("TOTAL MEMORY: " + maxMemory)
         scheduler.start(numCores, maxMemory, gpus)
 
         // Define unsecured routes: /predict and /health
@@ -242,8 +244,6 @@ object PredictionService extends PredictionJsonProtocol with AddModelJsonProtoco
                                 validate(models.contains(request.name), "The model is not available.") {
                                     try {
                                         currNumRequests.increment()
-//                                        System.err.println("CURR NUM REQUESTS: " + currNumRequests)
-//                                        System.err.println("CURR NUM THREADS: " + Thread.activeCount())
                                         val start = System.nanoTime()
                                         val processedRequest = processPredictionRequest(request)
                                         val deserializationTime = System.nanoTime() - start
@@ -266,7 +266,6 @@ object PredictionService extends PredictionJsonProtocol with AddModelJsonProtoco
                                             complete(StatusCodes.InternalServerError, msg + e.getMessage)
                                         }
                                     } finally {
-                                        System.err.println("REQUEST COMPLETED: " + currNumRequests)
                                         currNumRequests.decrement()
                                     }
                                 }
@@ -310,7 +309,7 @@ object PredictionService extends PredictionJsonProtocol with AddModelJsonProtoco
                                               if (gpus != null) {
                                                   GPUContextPool.AVAILABLE_GPUS = gpus
                                                   for (ix <- 0 until GPUContextPool.getAvailableCount) {
-                                                      System.err.println("ADDING SCRIPT FOR GPU: " + ix)
+                                                      LOG.info("ADDING SCRIPT FOR GPU: " + ix)
                                                       scripts += (s"GPU${ix}" -> conn.prepareScript(
                                                           request.dml, inputs, Array[String](request.outputVarName),
                                                           true, true, ix))
@@ -416,12 +415,12 @@ object PredictionService extends PredictionJsonProtocol with AddModelJsonProtoco
 
     def convertToBinaryIfNecessary(path: String, dir: String) : (MatrixBlock, String) = {
         var pathActual = path
-        println("READING: " + path)
+        LOG.info("READING: " + path)
         val data = conn.readMatrix(path)
 
         if (!isBinaryFormat(path)) {
-            println("CONVERTING TO BINARY")
-            println("BLOCKSIZE: " + ConfigurationManager.getBlocksize)
+            LOG.info("CONVERTING TO BINARY")
+            LOG.info("BLOCKSIZE: " + ConfigurationManager.getBlocksize)
             data.getMatrixCharacteristics
             val binPath = dir + "/binary/" + getNameFromPath(path) + ".mtx"
             DataConverter.writeMatrixToHDFS(data, binPath,
@@ -430,15 +429,15 @@ object PredictionService extends PredictionJsonProtocol with AddModelJsonProtoco
                     ConfigurationManager.getBlocksize, data.getNonZeros))
             pathActual = binPath
         }
-        println("DATA SIZE: " + pathActual + " => " + data.getInMemorySize)
+        LOG.info("DATA SIZE: " + pathActual + " => " + data.getInMemorySize)
         (data, pathActual)
     }
 
     def isBinaryFormat(path: String) : Boolean = {
         val mtdName = DataExpression.getMTDFileName(path)
-        println("READING: " + mtdName)
+        LOG.info("READING: " + mtdName)
         val mtd = new DataExpression().readMetadataFile(mtdName, false)
-        println("META: " + mtd)
+        LOG.info("META: " + mtd)
         if (mtd.containsKey("format")) mtd.getString("format") == "binary" else false
     }
 

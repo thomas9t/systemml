@@ -9,7 +9,7 @@ import scala.concurrent.duration.Duration
 object NonBatchingScheduler extends Scheduler {
 
     override def start(numCores: Int, cpuMemoryBudgetInBytes: Long, gpus: String): Unit = {
-        System.err.println(s"Starting Non Batching Scheduler with: ${numCores} CPUs and ${gpus} GPUs")
+        LOG.info(s"Starting Non Batching Scheduler with: ${numCores} CPUs and ${gpus} GPUs")
         super.start(numCores, cpuMemoryBudgetInBytes, gpus)
     }
 
