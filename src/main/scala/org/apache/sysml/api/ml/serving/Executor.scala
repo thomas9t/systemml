@@ -128,7 +128,7 @@ class JmlcExecutor(scheduler: Scheduler, execType: String, name: String, gCtx: G
                 scheduler.modelManager.setModelLocality(req.model.name, this)
                 prevModel = req.model.name
 
-                LOG.debug("Done executing request for: " + req.model.name + " on " + name)
+                LOG.info("Done executing request for: " + req.model.name + " on " + name)
             } catch {
                 case e: Exception => println("AN ERROR OCCURRED: " + e.getMessage + e.printStackTrace())
             }
