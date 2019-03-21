@@ -45,7 +45,7 @@ class BatchQueue(execType: String, name: String) extends PriorityBlockingQueue[B
     def getPrevRequest(name: String) : SchedulingRequest = { prevFirstRequest.getOrElse(name, null) }
 
     def enqueue(batch: Batch) : Unit = {
-        LOG.debug("ENQUEUING ONTO: " + getName)
+        LOG.debug("Enqueuing onto: " + getName)
         synchronized {
             this.add(batch)
             expectedExecutionTime.add(batch.expectedTime)
@@ -102,18 +102,15 @@ class JmlcExecutor(scheduler: Scheduler, execType: String, name: String, gCtx: G
                 val batchedMatrixData = BatchingUtils.batchRequests(requests)
                 val batchingTime = System.nanoTime() - start
                 val req = requests(0)
-                LOG.info("EXECUTE: " + req.model.name + " BATCH SIZE: " + batchedMatrixData.getNumRows)
-                LOG.debug("BEGIN PROCESS: " + req.model.name + " ON " + name)
+                LOG.info("Executing: " + req.model.name + " with batch size: " + batchedMatrixData.getNumRows + " on " + name)
                 val modelAcquireStart = System.nanoTime()
                 val script = scheduler.modelManager.acquire(req.model.name, this)
                 script.setName(this.getName)
                 val modelAcquireTime = System.nanoTime() - modelAcquireStart
                 script.setMatrix(req.model.inputVarName, batchedMatrixData, false)
-                LOG.debug("BEGIN EXEC: " + req.model.name + " ON " + name)
                 val execStart = System.nanoTime()
                 val res = script.executeScript().getMatrixBlock(req.model.outputVarName)
                 val execTime = System.nanoTime() - execStart
-                LOG.debug("DONE EXEC: " + req.model.name + " ON " + name)
                 responses = BatchingUtils.unbatchRequests(requests, res)
 
                 val modelReleaseStart = System.nanoTime()
@@ -131,7 +128,7 @@ class JmlcExecutor(scheduler: Scheduler, execType: String, name: String, gCtx: G
                 scheduler.modelManager.setModelLocality(req.model.name, this)
                 prevModel = req.model.name
 
-                LOG.debug("DONE PROCESS: " + req.model.name + " ON " + name)
+                LOG.debug("Done executing request for: " + req.model.name + " on " + name)
             } catch {
                 case e: Exception => println("AN ERROR OCCURRED: " + e.getMessage + e.printStackTrace())
             }

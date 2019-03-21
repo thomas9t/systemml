@@ -231,7 +231,7 @@ object PredictionService extends PredictionJsonProtocol with AddModelJsonProtoco
         scheduler = SchedulerFactory.getScheduler(schedulerType)
         val maxMemory = Runtime.getRuntime.maxMemory()  // total memory is just what the JVM has currently allocated
 
-        LOG.info("TOTAL MEMORY: " + maxMemory)
+        LOG.info("Total memory allocated to server: " + maxMemory)
         scheduler.start(numCores, maxMemory, gpus)
 
         // Define unsecured routes: /predict and /health
@@ -309,7 +309,7 @@ object PredictionService extends PredictionJsonProtocol with AddModelJsonProtoco
                                               if (gpus != null) {
                                                   GPUContextPool.AVAILABLE_GPUS = gpus
                                                   for (ix <- 0 until GPUContextPool.getAvailableCount) {
-                                                      LOG.info("ADDING SCRIPT FOR GPU: " + ix)
+                                                      LOG.info("Compiling script for GPU: " + ix)
                                                       scripts += (s"GPU${ix}" -> conn.prepareScript(
                                                           request.dml, inputs, Array[String](request.outputVarName),
                                                           true, true, ix))
@@ -415,12 +415,11 @@ object PredictionService extends PredictionJsonProtocol with AddModelJsonProtoco
 
     def convertToBinaryIfNecessary(path: String, dir: String) : (MatrixBlock, String) = {
         var pathActual = path
-        LOG.info("READING: " + path)
+        LOG.info("Reading weight: " + path)
         val data = conn.readMatrix(path)
 
         if (!isBinaryFormat(path)) {
-            LOG.info("CONVERTING TO BINARY")
-            LOG.info("BLOCKSIZE: " + ConfigurationManager.getBlocksize)
+            LOG.info("Converting weight to binary format")
             data.getMatrixCharacteristics
             val binPath = dir + "/binary/" + getNameFromPath(path) + ".mtx"
             DataConverter.writeMatrixToHDFS(data, binPath,
@@ -429,15 +428,12 @@ object PredictionService extends PredictionJsonProtocol with AddModelJsonProtoco
                     ConfigurationManager.getBlocksize, data.getNonZeros))
             pathActual = binPath
         }
-        LOG.info("DATA SIZE: " + pathActual + " => " + data.getInMemorySize)
         (data, pathActual)
     }
 
     def isBinaryFormat(path: String) : Boolean = {
         val mtdName = DataExpression.getMTDFileName(path)
-        LOG.info("READING: " + mtdName)
         val mtd = new DataExpression().readMetadataFile(mtdName, false)
-        LOG.info("META: " + mtd)
         if (mtd.containsKey("format")) mtd.getString("format") == "binary" else false
     }
 
