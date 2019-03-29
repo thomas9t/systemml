@@ -23,7 +23,7 @@ trait BatchingScheduler extends Scheduler {
         if (batchSize > 1) {
             val latencyObjective = latencyObjectives.get(model)
             val prevSize = modelBatchSizes.get(execType).get(model)
-            val decreaseSize = if (prevSize > 10) max(floor(prevSize * 0.90).toInt, 1) else prevSize - 1
+            val decreaseSize = if (prevSize > 10) max(floor(prevSize * 0.90).toInt, 1) else max(prevSize - 1, 0)
             modelBatchSizes.get(execType).put(model,
                 if (latency < latencyObjective.toNanos) prevSize + 1 else decreaseSize)
 
