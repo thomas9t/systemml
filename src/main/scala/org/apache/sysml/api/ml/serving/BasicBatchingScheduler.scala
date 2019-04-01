@@ -26,6 +26,7 @@ object BasicBatchingScheduler extends BatchingScheduler {
             val schedulableModels = getSchedulableModels(execType)
             if (schedulableModels.nonEmpty) {
                 val (nextModel, nextBatchSize) = getNextModelAndBatchSize(schedulableModels, execType)
+                LOG.info(s"Scheduling: ${nextBatchSize} requests for ${nextModel}")
                 for (_ <- 0 until nextBatchSize) {
                     val next = modelQueues.get(nextModel).poll()
                     assert(next != null, "Something is wrong. Next model should not be null")

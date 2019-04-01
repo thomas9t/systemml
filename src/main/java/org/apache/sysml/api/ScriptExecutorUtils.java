@@ -182,7 +182,7 @@ public class ScriptExecutorUtils {
 				ProgramRewriter rewriter2 = new ProgramRewriter(rewrite);
 				rewriter2.rewriteProgramHopDAGs(prog);
 			}
-
+			
 			//Step 6: construct lops (incl exec type and op selection)
 			dmlt.constructLops(prog);
 
