@@ -24,8 +24,8 @@ trait BatchingScheduler extends Scheduler {
             val latencyObjective = latencyObjectives.get(model)
             val prevSize = modelBatchSizes.get(execType).get(model)
             val decreaseSize = if (prevSize > 10) max(floor(prevSize * 0.90).toInt, 1) else max(prevSize - 1, 1)
-            modelBatchSizes.get(execType).put(model,
-                if (latency < latencyObjective.toNanos) prevSize + 1 else decreaseSize)
+            modelBatchSizes.get(execType).put(model, max(
+                if (latency < latencyObjective.toNanos) prevSize + 1 else decreaseSize, 1))
 
             // update expected execution times. For now we just assume this is a simple average
             val execTimeData = expectedExecutionTimes.get(model)
