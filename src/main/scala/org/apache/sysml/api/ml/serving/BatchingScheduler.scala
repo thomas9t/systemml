@@ -57,6 +57,7 @@ trait BatchingScheduler extends Scheduler {
                 val nextRequest = modelQueues.get(name).peek()
                 assert(nextRequest != null, "Something is wrong. Next request should not be null")
 
+                LOG.info(s"Model: ${name} size => ${qsize}")
                 if (checkShortFuse(nextRequest, qsize)) {
                     LOG.info("Model: " + name + " is near violating threshold. Scheduling immediately.")
                     shortFuse += name
