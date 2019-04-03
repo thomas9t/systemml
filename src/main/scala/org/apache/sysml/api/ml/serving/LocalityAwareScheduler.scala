@@ -48,7 +48,7 @@ object ExecutorQueueManager extends Runnable {
                                     nextBatchSize, nextBatchSize*_scheduler.getExpectedExecutionTime(m),
                                     nextRequest.receivedTime - System.nanoTime(), nextRequest.model.name)
                                 queue.enqueue(nextBatch)
-                                LOG.debug("Batch enqueued onto: " + queue.getName)
+                                LOG.info("Batch enqueued onto: " + queue.getName)
                             }
                             queue.updatePrevRequest(m, nextRequest) } )
                         }
