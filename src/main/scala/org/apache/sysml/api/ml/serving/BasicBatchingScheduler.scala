@@ -65,6 +65,7 @@ object BasicBatchingScheduler extends BatchingScheduler {
             request, model, new CountDownLatch(1), System.nanoTime(), null, statistics)
         statistics.queueSize = modelQueues.get(model.name).size
         modelQueues.get(model.name).add(schedulingRequest)
+        LOG.info(s"Received request for ${model.name}. Queue Size is now: ${statistics.queueSize}")
         counter += 1
         try {
             schedulingRequest.latch.await(timeout.length, timeout.unit)
