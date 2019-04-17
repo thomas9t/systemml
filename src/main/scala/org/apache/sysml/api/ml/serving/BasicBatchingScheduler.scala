@@ -48,6 +48,7 @@ object BasicBatchingScheduler extends BatchingScheduler {
 
         val nextBatchSize = min(modelQueues.get(nextModel).size(),
             getOptimalBatchSize(nextModel, execType))
+        System.err.println(s"Next Model: ${nextModel} => Batch Size: ${nextBatchSize}")
         (nextModel, nextBatchSize)
     }
 
