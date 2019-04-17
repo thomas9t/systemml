@@ -20,25 +20,23 @@ trait BatchingScheduler extends Scheduler {
                                     batchSize: Int,
                                     execType: String,
                                     execTime: Long): Unit = {
-        if (batchSize > 1) {
-            val latencyObjective = latencyObjectives.get(model)
-            val prevSize = modelBatchSizes.get(execType).get(model)
-            val decreaseSize = if (prevSize > 10) max(floor(prevSize * 0.90).toInt, 1) else max(prevSize - 1, 1)
-            modelBatchSizes.get(execType).put(model, max(
-                if (latency < latencyObjective.toNanos) prevSize + 1 else decreaseSize, 1))
+        val latencyObjective = latencyObjectives.get(model)
+        val prevSize = modelBatchSizes.get(execType).get(model)
+        val decreaseSize = max(prevSize - 1, 0)
+        modelBatchSizes.get(execType).put(model, max(
+            if (latency < latencyObjective.toNanos) prevSize + 1 else decreaseSize, 1))
 
-            // update expected execution times. For now we just assume this is a simple average
-            val execTimeData = expectedExecutionTimes.get(model)
-            execTimeData._1.add(execTime / batchSize)
-            execTimeData._2.increment()
-        }
+        // update expected execution times. For now we just assume this is a simple average
+        val execTimeData = expectedExecutionTimes.get(model)
+        execTimeData._1.add(execTime / batchSize)
+        execTimeData._2.increment()
     }
 
     def getExpectedExecutionTime(model: String) : Long = {
         expectedExecutionTimes.putIfAbsent(model, (new LongAdder(), new LongAdder()))
         val execTime = expectedExecutionTimes.get(model)
         val totalNumRequests = execTime._2.longValue()
-        if  (totalNumRequests > 0) execTime._1.longValue() / execTime._2.longValue() else 0
+        if (totalNumRequests > 0) execTime._1.longValue() / execTime._2.longValue() else 0
     }
 
     /**
@@ -57,11 +55,10 @@ trait BatchingScheduler extends Scheduler {
                 val nextRequest = modelQueues.get(name).peek()
                 assert(nextRequest != null, "Something is wrong. Next request should not be null")
 
-                LOG.info(s"Model: ${name} size => ${qsize}")
-                if (checkShortFuse(nextRequest, qsize)) {
-                    LOG.info("Model: " + name + " is near violating threshold. Scheduling immediately.")
-                    shortFuse += name
-                }
+                // if (checkShortFuse(nextRequest, qsize)) {
+                //     LOG.info("Model: " + name + " is near violating threshold. Scheduling immediately.")
+                //     shortFuse += name
+                // }
 
                 if (qsize >= getOptimalBatchSize(name, execType)) {
                     batchableModels += name
