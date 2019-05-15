@@ -56,7 +56,7 @@ trait BatchingScheduler extends Scheduler {
                 assert(nextRequest != null, "Something is wrong. Next request should not be null")
 
                 if (checkShortFuse(nextRequest, qsize)) {
-                    LOG.info("Model: " + name + " is near violating threshold. Scheduling immediately.")
+                    //LOG.info("Model: " + name + " is near violating threshold. Scheduling immediately.")
                     shortFuse += name
                 }
 
