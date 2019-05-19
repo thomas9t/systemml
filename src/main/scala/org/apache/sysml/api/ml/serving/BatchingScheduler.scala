@@ -75,7 +75,7 @@ trait BatchingScheduler extends Scheduler {
     def checkShortFuse(request: SchedulingRequest, numRequests: Int) : Boolean = {
         val elapsed = System.nanoTime() - request.receivedTime
         val expectedTimePerRequest = getExpectedExecutionTime(request.model.name)
-        val expectedTime = 1.1*numRequests*expectedTimePerRequest
+        val expectedTime = numRequests*expectedTimePerRequest
         LOG.info(s"Model: ${request.model.name} - Expected Time: ${expectedTime} (${expectedTimePerRequest})")
         (elapsed + expectedTime) > request.model.latencyObjective.toNanos
     }
