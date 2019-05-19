@@ -76,7 +76,7 @@ trait BatchingScheduler extends Scheduler {
         val elapsed = System.nanoTime() - request.receivedTime
         val expectedTimePerRequest = getExpectedExecutionTime(request.model.name)
         val expectedTime = numRequests*expectedTimePerRequest
-        LOG.info(s"Model: ${request.model.name} - Expected Time: ${expectedTime} (${expectedTimePerRequest})")
+        // LOG.info(s"Model: ${request.model.name} - Expected Time: ${expectedTime} (${expectedTimePerRequest})")
         (elapsed + expectedTime) > request.model.latencyObjective.toNanos
     }
 }
