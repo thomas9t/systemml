@@ -29,6 +29,7 @@ import akka.stream.ActorMaterializer
 import org.apache.commons.cli.PosixParser
 import com.typesafe.config.ConfigFactory
 
+import java.util.concurrent._
 import scala.concurrent.duration._
 import java.util.HashMap
 
@@ -51,6 +52,8 @@ import org.apache.commons.logging.Log
 import org.apache.commons.logging.LogFactory
 
 import scala.concurrent.ExecutionContext
+
+// import scala.concurrent.ExecutionContext
 
 // format: can be file, binary, csv, ijv, jpeg, ...
 
@@ -166,7 +169,8 @@ object PredictionService extends PredictionJsonProtocol with AddModelJsonProtoco
     val combined = customConf.withFallback(basicConf)
     implicit val system = ActorSystem("systemml-prediction-service", ConfigFactory.load(combined))
     implicit val materializer = ActorMaterializer()
-    implicit val executionContext = ExecutionContext.global
+    implicit val executionContext = ExecutionContext.fromExecutor(
+        Executors.newFixedThreadPool(1000))
     implicit val timeout = akka.util.Timeout(300.seconds)
     val userPassword = new HashMap[String, String]()
     var bindingFuture: Future[Http.ServerBinding] = null

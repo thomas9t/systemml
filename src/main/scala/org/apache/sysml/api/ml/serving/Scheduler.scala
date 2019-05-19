@@ -42,7 +42,8 @@ trait Scheduler {
     val LOG: Log = LogFactory.getLog(classOf[Scheduler].getName)
     var executorService: ExecutorService = _
     protected var _statistics = true
-    implicit val ec = ExecutionContext.global
+    implicit val ec = ExecutionContext.fromExecutor(
+        Executors.newFixedThreadPool(1000))
     var executorTypes = Array[String]()
     var modelManager = ReferenceCountedModelManager
 
