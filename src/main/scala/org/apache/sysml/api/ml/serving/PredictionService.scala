@@ -178,6 +178,7 @@ object PredictionService extends PredictionJsonProtocol with AddModelJsonProtoco
     var scheduler: Scheduler = null
 
     val sysmlConf = new DMLConfig();
+    sysmlConf.setTextValue("sysml.stats.finegrained", "true");
     sysmlConf.setTextValue("sysml.floating.point.precision", "single");
     sysmlConf.setTextValue("sysml.native.blas", "mkl");
     val conn = new Connection(sysmlConf)
