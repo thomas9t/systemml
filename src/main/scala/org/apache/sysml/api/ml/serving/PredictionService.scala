@@ -45,6 +45,7 @@ import org.apache.sysml.runtime.io.IOUtilFunctions
 import org.apache.sysml.api.jmlc.Connection
 import org.apache.sysml.api.jmlc.PreparedScript
 import org.apache.sysml.conf.ConfigurationManager
+import org.apache.sysml.conf.DMLConfig;
 import org.apache.sysml.runtime.instructions.gpu.context.GPUContextPool
 import org.apache.sysml.runtime.matrix.MatrixCharacteristics
 import org.apache.sysml.runtime.util.DataConverter
@@ -175,7 +176,11 @@ object PredictionService extends PredictionJsonProtocol with AddModelJsonProtoco
     val userPassword = new HashMap[String, String]()
     var bindingFuture: Future[Http.ServerBinding] = null
     var scheduler: Scheduler = null
-    val conn = new Connection()
+
+    val sysmlConf = new DMLConfig();
+    sysmlConf.setTextValue("sysml.floating.point.precision", "single");
+    sysmlConf.setTextValue("sysml.native.blas", "mkl");
+    val conn = new Connection(sysmlConf)
     var existantMatrixBlocks = Array[MatrixBlockContainer]()
 
     def getCommandLineOptions(): org.apache.commons.cli.Options = {
