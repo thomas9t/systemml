@@ -25,7 +25,12 @@
 import numpy as np
 import os
 import math
-from itertools import chain, imap
+from itertools import chain
+try:
+    from itertools import imap
+except ImportError:
+    # Support Python 3x
+    imap = map
 from ..converters import *
 from ..classloader import *
 import keras
@@ -51,6 +56,12 @@ except ImportError:
 # - To add an activation, simply add the keras type to caffe type in supportedCaffeActivations.
 # - To add a layer, add the corresponding caffe layer type in supportedLayers. If the layer accepts parameters then update layerParamMapping too.
 # - The above logic is implemented in the function converKerasToCaffeNetwork
+#
+#
+# Example guide to add a new layer that does not have a weight and bias (eg: UpSampling2D or ZeroPadding2D):
+# - Add mapping of Keras class to Caffe layer in the supportedLayers map below
+# - Define a helper method that returns Caffe's layer parameter in JSON-like data structure. See getConvParam, getUpSamplingParam, getPaddingParam, etc.
+# - Add mapping of Keras class to Caffe layer parameter in the layerParamMapping map below
 # --------------------------------------------------------------------------------------
 
 supportedCaffeActivations = {
@@ -73,7 +84,8 @@ supportedLayers = {
     keras.layers.LSTM: 'LSTM',
     keras.layers.Flatten: 'Flatten',
     keras.layers.BatchNormalization: 'None',
-    keras.layers.Activation: 'None'
+    keras.layers.Activation: 'None',
+    keras.layers.ZeroPadding2D: 'Padding'
 }
 
 
@@ -112,7 +124,7 @@ def toKV(key, value):
 
 
 def _parseJSONObject(obj):
-    rootName = obj.keys()[0]
+    rootName = list(obj.keys())[0]
     ret = ['\n', rootName, ' {']
     for key in obj[rootName]:
         if isinstance(obj[rootName][key], dict):
@@ -172,7 +184,7 @@ def _parseKerasLayer(layer):
         layerArgs['bottom'] = _getBottomLayers(layer)
         layerArgs['top'] = layer.name
     if len(param) > 0:
-        paramName = param.keys()[0]
+        paramName = list(param.keys())[0]
         layerArgs[paramName] = param[paramName]
     ret = { 'layer': layerArgs }
     return [ret, _parseActivation(
@@ -180,6 +192,7 @@ def _parseKerasLayer(layer):
 
 
 def _parseBatchNorm(layer):
+    # TODO: Ignoring axis
     bnName = layer.name + '_1'
     config = layer.get_config()
     bias_term = 'true' if config['center'] else 'false'
@@ -194,39 +207,62 @@ specialLayers = {
     keras.layers.BatchNormalization: _parseBatchNorm
 }
 
+# Used by convolution and maxpooling to return the padding value as integer based on type 'same' and 'valid'
+def getPadding(kernel_size, padding):
+    if padding.lower() == 'same':
+        return int(kernel_size/2)
+    elif padding.lower() == 'valid':
+        return 0
+    else:
+        raise ValueError('Unsupported padding:' + str(padding))
 
+# Used by padding to extract different types of possible padding:
+# int: the same symmetric padding is applied to height and width.
+# tuple of 2 ints: interpreted as two different symmetric padding values for height and width: (symmetric_height_pad, symmetric_width_pad)
+# tuple of 2 tuples of 2 ints: interpreted as  ((top_pad, bottom_pad), (left_pad, right_pad))
+def get2Tuple(val):
+    return [val, val] if isinstance(val, int) else [val[0], val[1]]
+
+# Helper method to return Caffe's ConvolutionParameter in JSON-like data structure
 def getConvParam(layer):
-    stride = (1, 1) if layer.strides is None else layer.strides
-    padding = [
-        layer.kernel_size[0] /
-        2,
-        layer.kernel_size[1] /
-        2] if layer.padding == 'same' else [
-        0,
-        0]
+    # TODO: dilation_rate, kernel_constraint and bias_constraint are not supported
+    stride = (1, 1) if layer.strides is None else get2Tuple(layer.strides)
+    kernel_size = get2Tuple(layer.kernel_size)
     config = layer.get_config()
+    if not layer.use_bias:
+        raise Exception('use_bias=False is not supported for the Conv2D layer. Consider setting use_bias to true.')
     return {'num_output': layer.filters, 'bias_term': str(config['use_bias']).lower(
-    ), 'kernel_h': layer.kernel_size[0], 'kernel_w': layer.kernel_size[1], 'stride_h': stride[0], 'stride_w': stride[1],
-            'pad_h': padding[0], 'pad_w': padding[1]}
+    ), 'kernel_h': kernel_size[0], 'kernel_w': kernel_size[1], 'stride_h': stride[0], 'stride_w': stride[1],
+            'pad_h': getPadding(kernel_size[0], layer.padding), 'pad_w': getPadding(kernel_size[1], layer.padding)}
 
 
+# Helper method to return newly added UpsampleParameter
+# (search for UpsampleParameter in the file src/main/proto/caffe/caffe.proto) in JSON-like data structure
 def getUpSamplingParam(layer):
-    return {'size_h': layer.size[0], 'size_w': layer.size[1]}
+    # TODO: Skipping interpolation type
+    size = get2Tuple(layer.size)
+    return {'size_h': size[0], 'size_w': size[1]}
 
+# Helper method to return newly added PaddingParameter
+# (search for UpsampleParameter in the file src/main/proto/caffe/caffe.proto) in JSON-like data structure
+def getPaddingParam(layer):
+    if isinstance(layer.padding, int):
+        padding = get2Tuple(layer.padding) + get2Tuple(layer.padding)
+    elif hasattr(layer.padding, '__len__') and len(layer.padding) == 2:
+        padding = get2Tuple(layer.padding[0]) + get2Tuple(layer.padding[1])
+    else:
+        raise ValueError('padding should be either an int, a tuple of 2 ints or or a tuple of 2 tuples of 2 ints. Found: ' + str(layer.padding))
+    return {'top_pad': padding[0], 'bottom_pad': padding[1], 'left_pad': padding[2], 'right_pad': padding[3], 'pad_value':0}
 
+# Helper method to return Caffe's PoolingParameter in JSON-like data structure
 def getPoolingParam(layer, pool='MAX'):
-    stride = (1, 1) if layer.strides is None else layer.strides
-    padding = [
-        layer.pool_size[0] /
-        2,
-        layer.pool_size[1] /
-        2] if layer.padding == 'same' else [
-        0,
-        0]
-    return {'pool': pool, 'kernel_h': layer.pool_size[0], 'kernel_w': layer.pool_size[1],
-            'stride_h': stride[0], 'stride_w': stride[1], 'pad_h': padding[0], 'pad_w': padding[1]}
+    stride = (1, 1) if layer.strides is None else get2Tuple(layer.strides)
+    pool_size = get2Tuple(layer.pool_size)
+    return {'pool': pool, 'kernel_h': pool_size[0], 'kernel_w': pool_size[1],
+            'stride_h': stride[0], 'stride_w': stride[1], 'pad_h': getPadding(pool_size[0], layer.padding),
+            'pad_w': getPadding(pool_size[1], layer.padding)}
 
-
+# Helper method to return Caffe's RecurrentParameter in JSON-like data structure
 def getRecurrentParam(layer):
     if (not layer.use_bias):
         raise Exception('Only use_bias=True supported for recurrent layers')
@@ -237,29 +273,48 @@ def getRecurrentParam(layer):
     return {'num_output': layer.units, 'return_sequences': str(
         layer.return_sequences).lower()}
 
-
+# Helper method to return Caffe's InnerProductParameter in JSON-like data structure
 def getInnerProductParam(layer):
     if len(layer.output_shape) != 2:
         raise Exception('Only 2-D input is supported for the Dense layer in the current implementation, but found '
                         + str(layer.input_shape) + '. Consider adding a Flatten before ' + str(layer.name))
+    if not layer.use_bias:
+        raise Exception('use_bias=False is not supported for the Dense layer. Consider setting use_bias to true.')
     return {'num_output': layer.units}
 
-# TODO: Update AveragePooling2D when we add maxpooling support
+# Helper method to return Caffe's DropoutParameter in JSON-like data structure
+def getDropoutParam(layer):
+    if layer.noise_shape is not None:
+        supported = True
+        if len(layer.input_shape) != len(layer.noise_shape):
+            supported = False
+        else:
+            for i in range(len(layer.noise_shape)-1):
+                # Ignore the first dimension
+                if layer.input_shape[i+1] != layer.noise_shape[i+1]:
+                    supported = False
+        if not supported:
+            raise Exception('noise_shape=' + str(layer.noise_shape) + ' is not supported for Dropout layer with input_shape='
+                            + str(layer.input_shape))
+    return {'dropout_ratio': layer.rate}
+
 layerParamMapping = {
     keras.layers.InputLayer: lambda l:
     {'data_param': {'batch_size': l.batch_size}},
     keras.layers.Dense: lambda l:
     {'inner_product_param': getInnerProductParam(l)},
     keras.layers.Dropout: lambda l:
-    {'dropout_param': {'dropout_ratio': l.rate}},
+    {'dropout_param': getDropoutParam(l)},
     keras.layers.Add: lambda l:
     {'eltwise_param': {'operation': 'SUM'}},
     keras.layers.Concatenate: lambda l:
     {'concat_param': {'axis': _getCompensatedAxis(l)}},
     keras.layers.Conv2DTranspose: lambda l:
-    {'convolution_param': getConvParam(l)},
+    {'convolution_param': getConvParam(l)}, # will skip output_padding
     keras.layers.UpSampling2D: lambda l:
     {'upsample_param': getUpSamplingParam(l)},
+    keras.layers.ZeroPadding2D: lambda l:
+    {'padding_param': getPaddingParam(l)},
     keras.layers.Conv2D: lambda l:
     {'convolution_param': getConvParam(l)},
     keras.layers.MaxPooling2D: lambda l:
@@ -486,7 +541,7 @@ def getInputMatrices(layer):
     elif isinstance(layer, keras.layers.LSTM):
         weights = layer.get_weights()
         W, U, b =  weights[0], weights[1], weights[2]
-        units = W.shape[1]/4
+        units = int(W.shape[1]/4)
         if W.shape[1] != U.shape[1]:
             raise Exception('Number of hidden units of the kernel and the recurrent kernel doesnot match')
         # Note: For the LSTM layer, Keras weights are laid out in [i, f, c, o] format;

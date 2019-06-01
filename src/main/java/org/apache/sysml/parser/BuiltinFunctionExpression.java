@@ -219,12 +219,13 @@ public class BuiltinFunctionExpression extends DataIdentifier
 			checkMatrixParam(getFifthExpr());
 			
 			// setup output properties
-			if(getOutputs() == null || getOutputs().length != 2) {
+			if(getOutputs() == null || getOutputs().length != 3) {
 				int numOutputs = getOutputs() == null ? 0 : getOutputs().length;
-				raiseValidateError("The builtin function lstm has two outputs, but instead found: " + numOutputs, conditional);
+				raiseValidateError("The builtin function lstm has three outputs, but instead found: " + numOutputs, conditional);
 			}
 			DataIdentifier out = (DataIdentifier) getOutputs()[0];
 			DataIdentifier cy = (DataIdentifier) getOutputs()[1];
+			DataIdentifier cache = (DataIdentifier) getOutputs()[2];
 			
 			// Output1 - out: If `return_sequences` is True, outputs for all timesteps, else outputs for the final timestep.
 			out.setDataType(DataType.MATRIX);
@@ -238,12 +239,17 @@ public class BuiltinFunctionExpression extends DataIdentifier
 			cy.setDimensions(getExpr(4).getOutput().getDim1(), getExpr(4).getOutput().getDim2());
 			cy.setBlockDimensions(getExpr(4).getOutput().getRowsInBlock(), getExpr(4).getOutput().getColumnsInBlock());
 			
+			cache.setDataType(DataType.MATRIX);
+			cache.setValueType(ValueType.DOUBLE);
+			cache.setDimensions(1, 1); // Use dummy dimension for now. 
+			cache.setBlockDimensions(getFirstExpr().getOutput().getRowsInBlock(), getFirstExpr().getOutput().getColumnsInBlock());
+			
 			break;
 		}
 		case LSTM_BACKWARD:
 		{
-			// Input: X, W, b, out0, c0, return_sequences, dout, cy
-			checkNumParameters(8);
+			// Input: X, W, b, out0, c0, return_sequences, dout, cy, cache
+			checkNumParameters(9);
 			checkMatrixParam(getFirstExpr());
 			checkMatrixParam(getSecondExpr());
 			checkMatrixParam(getThirdExpr());
@@ -1717,8 +1723,11 @@ public class BuiltinFunctionExpression extends DataIdentifier
 				  || (!allowsMV && expr1.getOutput().getDim2() != expr2.getOutput().getDim2()) 
 				  || (allowsMV && expr1.getOutput().getDim2() != expr2.getOutput().getDim2() && expr2.getOutput().getDim2() != 1) ) 
 			{
-				raiseValidateError("Mismatch in matrix dimensions of parameters for function "
-						+ this.getOpCode(), conditional, LanguageErrorCodes.INVALID_PARAMETERS);
+				String str1 = "([" + expr1.getOutput().getDim1() + ", " + expr1.getOutput().getDim2()  + "] and [" 
+						+ expr2.getOutput().getDim1() + ", " + expr2.getOutput().getDim2()  + "])";
+				String str2 = !allowsMV ? " (Note: " + this.getOpCode() + " does not support matrix-vector operations)" : "";
+				raiseValidateError("Mismatch in matrix dimensions " + str1 + " of parameters for function "
+						+ this.getOpCode() + str2, conditional, LanguageErrorCodes.INVALID_PARAMETERS);
 			}
 		}
 	}
@@ -1726,7 +1735,11 @@ public class BuiltinFunctionExpression extends DataIdentifier
 	private void checkMatchingDimensionsQuantile() 
 	{
 		if (getFirstExpr().getOutput().getDim1() != getSecondExpr().getOutput().getDim1()) {
-			raiseValidateError("Mismatch in matrix dimensions for "
+			Expression expr1 = getFirstExpr();
+			Expression expr2 = getSecondExpr();
+			String str1 = "([" + expr1.getOutput().getDim1() + ", " + expr1.getOutput().getDim2()  + "] and [" 
+					+ expr2.getOutput().getDim1() + ", " + expr2.getOutput().getDim2()  + "])";
+			raiseValidateError("Mismatch in matrix dimensions " + str1 + " of parameters for "
 					+ this.getOpCode(), false, LanguageErrorCodes.INVALID_PARAMETERS);
 		}
 	}

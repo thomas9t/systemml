@@ -133,10 +133,19 @@ public class PreparedScript implements ConfigurableAPI
 		_dmlconf = dmlconf;
 		_cconf = cconf;
 	}
-
+	
 	public void clearPinnedData() {
 		this._inVarReuse.clear();
 	}
+	
+	public boolean hasPinnedData() { 
+		return _inVarReuse.keySet().size() > 0; 
+	}
+
+	public void setGpuContext(GPUContext gCtx) { 
+		this._gpuCtx.set(0, gCtx); 
+	}
+	
 	
 	/**
 	 * Sets a boolean flag indicating if runtime statistics should be gathered
@@ -340,8 +349,6 @@ public class PreparedScript implements ConfigurableAPI
 		}
 	}
 
-	public boolean hasPinnedData() { return _inVarReuse.keySet().size() > 0; }
-
 	/**
 	 * Binds a frame object to a registered input variable.
 	 * 
@@ -490,8 +497,6 @@ public class PreparedScript implements ConfigurableAPI
 
 		return rvars;
 	}
-
-	public void setGpuContext(GPUContext gCtx) { this._gpuCtx.set(0, gCtx); }
 	
 	/**
 	 * Explain the DML/PyDML program and view result as a string.

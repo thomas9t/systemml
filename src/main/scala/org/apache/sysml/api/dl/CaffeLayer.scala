@@ -193,12 +193,11 @@ class Data(val param: LayerParameter, val id: Int, val net: CaffeNetwork, val nu
     if (param.hasTransformParam && param.getTransformParam.hasScale) {
       dmlScript.append("X_full = X_full * " + param.getTransformParam.getScale + "\n")
     }
-    if (param.hasDataParam && param.getDataParam.hasBatchSize) {
-      dmlScript.append("BATCH_SIZE = " + param.getDataParam.getBatchSize + "\n")
-    } else {
-      Caffe2DML.LOG.debug("Using default batch size of 64 as batch size is not set with DataParam")
-      dmlScript.append("BATCH_SIZE = 64\n")
-    }
+    dmlScript.append(Caffe2DML.batchSize + " = " + getBatchSize + "\n" )
+  }
+  def getBatchSize():Int = {
+    val defaultBatchSize = if(param.hasDataParam && param.getDataParam.hasBatchSize) param.getDataParam.getBatchSize else 64
+    caffe2dmlObj.getModifiedSolverParamInt("batch_size", defaultBatchSize)
   }
   var dataOutputShape                                                   = ("$num_channels", "$height", "$width")
   override def forward(dmlScript: StringBuilder, isPrediction: Boolean) = {}
@@ -370,6 +369,7 @@ class BatchNorm(val param: LayerParameter, val id: Int, val net: CaffeNetwork) e
       val topLayers = net.getTopLayers(param.getName).map(l => net.getCaffeLayer(l)).toList
       if (topLayers.length != 1 && !topLayers(0).isInstanceOf[Scale]) throw new LanguageException("Only one top layer of type Scale allowed for BatchNorm")
       scaleLayer = topLayers(0).asInstanceOf[Scale]
+      scaleLayer.isPartOfBatchNorm = true
     }
   def numChannels = bottomLayerOutputShape._1
   def Hin         = bottomLayerOutputShape._2
@@ -385,6 +385,7 @@ class Scale(val param: LayerParameter, val id: Int, val net: CaffeNetwork) exten
   override def backward(dmlScript: StringBuilder, outSuffix: String): Unit = assignDoutToDX(dmlScript, outSuffix)
   override def weightShape(): Array[Int]                                   = Array(bottomLayerOutputShape._1.toInt, 1)
   override def biasShape(): Array[Int]                                     = Array(bottomLayerOutputShape._1.toInt, 1)
+  var isPartOfBatchNorm = false
 }
 // ------------------------------------------------------------------
 
@@ -669,6 +670,43 @@ class TanH(val param: LayerParameter, val id: Int, val net: CaffeNetwork) extend
   override def weightShape(): Array[Int]                             = null
   override def biasShape(): Array[Int]                               = null
   // -------------------------------------------------
+}
+
+class Padding(val param: LayerParameter, val id: Int, val net: CaffeNetwork) extends CaffeLayer {
+  override def sourceFileName                       = {
+    if(param.getPaddingParam.getPadValue == 0) "zero_pad2d"
+    else throw new DMLRuntimeException("Only pad_value = 0 is supported. Found: " + param.getPaddingParam.getPadValue)
+  }
+  override def init(dmlScript: StringBuilder): Unit = {}
+  
+  override def forward(dmlScript: StringBuilder, isPrediction: Boolean) = {
+    if(skipPadding) {
+      assign(dmlScript, out, X)
+    }
+    else {
+      invokeForward(dmlScript, List[String](out), X, numChannels, Hin, Win, top_pad, bottom_pad, left_pad, right_pad)
+    }
+  }
+  override def backward(dmlScript: StringBuilder, outSuffix: String): Unit = {
+    if(skipPadding) {
+      assignDoutToDX(dmlScript, outSuffix)
+    }
+    else {
+      invokeBackward(dmlScript, outSuffix, List[String]("dOut" + id), dout, numChannels, Hin, Win, top_pad, bottom_pad, left_pad, right_pad)
+    }
+  }
+  override def weightShape(): Array[Int]                             = null
+  override def biasShape(): Array[Int]                               = null
+  override def outputShape = (numChannels, int_add(Hin, top_pad, bottom_pad), int_add(Win, left_pad, right_pad))
+  def skipPadding = param.getPaddingParam.getTopPad == 0 && param.getPaddingParam.getBottomPad == 0 && 
+    param.getPaddingParam.getLeftPad == 0 && param.getPaddingParam.getRightPad == 0
+  def top_pad = param.getPaddingParam.getTopPad.toString
+  def bottom_pad = param.getPaddingParam.getBottomPad.toString
+  def left_pad = param.getPaddingParam.getLeftPad.toString
+  def right_pad = param.getPaddingParam.getRightPad.toString
+  def numChannels  = bottomLayerOutputShape._1
+  def Hin          = bottomLayerOutputShape._2
+  def Win          = bottomLayerOutputShape._3
 }
 
 class ReLU(val param: LayerParameter, val id: Int, val net: CaffeNetwork) extends CaffeLayer {
@@ -986,6 +1024,10 @@ class RNN(val param: LayerParameter, val id: Int, val net: CaffeNetwork) extends
 class LSTM(val param: LayerParameter, val id: Int, val net: CaffeNetwork) extends CaffeLayer with HasWeight with HasBias {
   val return_sequences = param.getRecurrentParam.getReturnSequences
   
+  var _useBuiltinFunction = true
+  def useBuiltinFunction(enabled:Boolean): Unit = {
+    _useBuiltinFunction = enabled
+  }
   // ---------------------------------------------------------
   // Note: since Caffe doesnot have return_sequences, number of output is same as number of neurons
   def M():String = param.getRecurrentParam.getNumOutput.toString
@@ -994,7 +1036,7 @@ class LSTM(val param: LayerParameter, val id: Int, val net: CaffeNetwork) extend
   def timesteps():String = bottomLayerOutputShape._1
   def input_features():String = bottomLayerOutputShape._2
   def output_features():Int = param.getRecurrentParam.getNumOutput
-  override def sourceFileName = "lstm"
+  override def sourceFileName = if(_useBuiltinFunction) "lstm_builtin" else "lstm" 
   override def outputShape               = if(return_sequences) (timesteps, output_features.toString, "1") else (output_features.toString, "1", "1")
   override def biasShape(): Array[Int]   = Array(1, 4*M.toInt)
   override def weightShape(): Array[Int] = Array(input_features.toInt + M.toInt, 4*M.toInt)
@@ -1009,17 +1051,24 @@ class LSTM(val param: LayerParameter, val id: Int, val net: CaffeNetwork) extend
     val N:String = null // output_features.toString
     val T = timesteps()
     val D = input_features()
-    invokeForward(dmlScript, List[String](out, c, cache_out, cache_c, cache_ifog), X, weight, bias, T, D, return_sequences.toString.toUpperCase, out0, c0)
+    if(_useBuiltinFunction)
+      invokeForward(dmlScript, List[String](out, c, cache_out), X, weight, bias, return_sequences.toString.toUpperCase, out0, c0)
+    else
+      invokeForward(dmlScript, List[String](out, c, cache_out, cache_c, cache_ifog), X, weight, bias, T, D, return_sequences.toString.toUpperCase, out0, c0)
   }
   
   override def backward(dmlScript: StringBuilder, outSuffix: String) = {
     val T = timesteps()
     val D = input_features()
-    invokeBackward(dmlScript, outSuffix, List[String]("dOut" + id, dWeight, dBias, dout0, dc0), dout, dc0, X, weight, bias,
+    if(_useBuiltinFunction)
+      invokeBackward(dmlScript, outSuffix, List[String]("dOut" + id, dWeight, dBias, dout0, dc0), dout, dc0, X, weight, bias,
+        return_sequences.toString.toUpperCase, out0, c0, cache_out)
+    else
+      invokeBackward(dmlScript, outSuffix, List[String]("dOut" + id, dWeight, dBias, dout0, dc0), dout, dc0, X, weight, bias,
         T, D, return_sequences.toString.toUpperCase, out0, c0, cache_out, cache_c, cache_ifog)
   }
   
-  val cache_out = "cache_out_" + id
+  def cache_out() = if(_useBuiltinFunction) ("lstm_state_" + id) else ("cache_out_" + id)
   val out0 = "out0_" + id
   val dout0 = "dout0_" + id
   val c0 = "cellState0_" + id

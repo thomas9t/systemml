@@ -38,6 +38,31 @@ To download SystemML, visit the [downloads](http://systemml.apache.org/download)
 
 This version of SystemML supports: Java 8+, Scala 2.11+, Python 2.7/3.5+, Hadoop 2.6+, and Spark 2.1+.
 
+## Quick tour of the documentation
+
+* If you are new to SystemML, please refer to the [installation guide](http://systemml.apache.org/install-systemml.html) and try out our [sample notebooks](http://systemml.apache.org/get-started.html#sample-notebook)
+* If you want to invoke one of our [pre-implemented algorithms](algorithms-reference):
+  * In Python, consider using 
+    * the convenient [mllearn API](http://apache.github.io/systemml/python-reference.html#mllearn-api). The usage is described in our [beginner's guide](http://apache.github.io/systemml/beginners-guide-python.html#invoke-systemmls-algorithms)  
+    * Or [Spark MLContext](spark-mlcontext-programming-guide) API
+  * In Java/Scala, consider using 
+    * [Spark MLContext](spark-mlcontext-programming-guide) API for large datasets
+    * Or [JMLC](jmlc) API for in-memory scoring
+  * Via Command-line, follow the usage section in the [Algorithms Reference](algorithms-reference) 
+* If you want to implement a deep neural network, consider
+  * Specifying your network in [Keras](https://keras.io/) format and invoking it with [Keras2DML](beginners-guide-keras2dml) API
+  * Or specifying your network in [Caffe](http://caffe.berkeleyvision.org/) format and invoking it with [Caffe2DML](beginners-guide-caffe2dml) API
+  * Or using DML-bodied [NN library](https://github.com/apache/systemml/tree/master/scripts/nn). The usage is described in our [sample notebook](https://github.com/apache/systemml/blob/master/samples/jupyter-notebooks/Deep%20Learning%20Image%20Classification.ipynb)
+* Since training a deep neural network is often compute-bound, you may want to enable SystemML's
+  * [native BLAS](native-backend)
+  * Or [GPU backend](gpu)
+* If you want to implement a custom machine learning algorithm and you are familiar with:
+  * R syntax, consider implementing your algorithm in [DML](dml-language-reference) (recommended)
+  * Python syntax, you can implement your algorithm in [PyDML](beginners-guide-to-dml-and-pydml) or using the [matrix class](http://apache.github.io/systemml/python-reference.html#matrix-class)
+* If you want to try out SystemML on your laptop, consider
+  * using the above mentioned APIs with Apache Spark (recommended). Please refer to our [installation guide](http://systemml.apache.org/install-systemml.html) for instructions on how to setup SystemML on your laptop
+  * Or running SystemML in the [standalone mode](standalone-guide) with Java
+
 ## Running SystemML
 
 * [Beginner's Guide For Python Users](beginners-guide-python) - Beginner's Guide for Python users.
@@ -51,8 +76,8 @@ for running SystemML from Spark via Scala, Python, or Java.
 machine in R-like and Python-like declarative languages.
 * [JMLC](jmlc) - Java Machine Learning Connector.
 * [Deep Learning with SystemML](deep-learning)
-  * *Experimental* Caffe2DML API for Deep Learning ([beginner's guide](beginners-guide-caffe2dml), [reference guide](reference-guide-caffe2dml)) - Converts a Caffe specification to DML.
-  * *Experimental* [Keras2DML API](beginners-guide-keras2dml) for Deep Learning.
+  * Keras2DML API for Deep Learning ([beginner's guide](beginners-guide-keras2dml), [reference guide](reference-guide-keras2dml)) - Converts a Keras model to DML.
+  * Caffe2DML API for Deep Learning ([beginner's guide](beginners-guide-caffe2dml), [reference guide](reference-guide-caffe2dml)) - Converts a Caffe specification to DML.
 
 ## Language Guides
 

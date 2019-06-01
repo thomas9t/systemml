@@ -36,9 +36,7 @@ from sklearn.metrics import accuracy_score, r2_score
 from py4j.protocol import Py4JError
 import traceback
 from sklearn.preprocessing import LabelEncoder
-import threading
-import time
-import math
+import threading, time, math, os
 
 from ..converters import *
 from ..classloader import *
@@ -154,6 +152,16 @@ class BaseSystemMLEstimator(Estimator):
         """
         self.estimator.setConfigProperty(propertyName, propertyValue)
         return self
+
+    def getConfigProperty(self, propertyName):
+        """
+        Get configuration property, such as getConfigProperty("sysml.localtmpdir").
+
+        Parameters
+        ----------
+        propertyName: String
+        """
+        return self.estimator.getConfigProperty(propertyName)
 
     def _fit_df(self):
         global default_jvm_stdout, default_jvm_stdout_parallel_flush
@@ -314,7 +322,7 @@ class BaseSystemMLEstimator(Estimator):
         output: a java-side object (either MatrixBlock or Java DataFrame)
         """
         if isinstance(X, SUPPORTED_TYPES) and self.transferUsingDF:
-            retDF = DataFrame(output, self.sparkSession)
+            retDF = DataFrame(output, self.sparkSession._wrapped)
             retPDF = retDF.sort('__INDEX').select('prediction').toPandas()
             return retPDF.as_matrix().flatten() if isinstance(X, np.ndarray) else retPDF
         elif isinstance(X, SUPPORTED_TYPES):
@@ -924,20 +932,24 @@ class Caffe2DML(BaseSystemMLClassifier):
             self.estimator.setWeightsToIgnore(ignore_weights)
 
     def set(self, debug=None, train_algo=None, test_algo=None, parallel_batches=None,
-            output_activations=None, perform_one_hot_encoding=None, parfor_parameters=None, inline_nn_library=None):
+            output_activations=None, perform_one_hot_encoding=None, parfor_parameters=None, inline_nn_library=None, use_builtin_lstm_fn=None,
+            perform_fused_backward_update=None, weight_parallel_batches=None):
         """
         Set input to Caffe2DML
 
         Parameters
         ----------
         debug: to add debugging DML code such as classification report, print DML script, etc (default: False)
-        train_algo: can be minibatch, batch, allreduce_parallel_batches or allreduce (default: minibatch)
-        test_algo: can be minibatch, batch, allreduce_parallel_batches or allreduce (default: minibatch)
-        parallel_batches: number of parallel batches
+        train_algo: can be minibatch, batch, allreduce_parallel_batches, looped_minibatch or allreduce (default: minibatch)
+        test_algo: can be minibatch, batch, allreduce_parallel_batches, looped_minibatch or allreduce (default: minibatch)
+        parallel_batches: number of parallel batches (required for allreduce_parallel_batches or looped_minibatch)
         output_activations: (developer flag) directory to output activations of each layer as csv while prediction. To be used only in batch mode (default: None)
-        perform_one_hot_encoding: should perform one-hot encoding in DML using table function (default: False)
+        perform_one_hot_encoding: should perform one-hot encoding in DML using table function (default: True)
         parfor_parameters: dictionary for parfor parameters when using allreduce-style algorithms (default: "")
         inline_nn_library: whether to inline the NN library when generating DML using Caffe2DML (default: False)
+        use_builtin_lstm_fn: whether to use builtin lstm function for LSTM layer (default: True)
+        perform_fused_backward_update: whether to perform update immediately after backward pass at the script level. Supported for minibatch and batch algorithms. (default: True)
+        weight_parallel_batches: whether to multiply 1/parallel_batches to gradients before performing SGD update (default: True)
         """
         if debug is not None:
             self.estimator.setInput("$debug", str(debug).upper())
@@ -949,6 +961,12 @@ class Caffe2DML(BaseSystemMLClassifier):
             self.estimator.setInput("$test_algo", str(test_algo).lower())
         if parallel_batches is not None:
             self.estimator.setInput("$parallel_batches", str(parallel_batches))
+        if use_builtin_lstm_fn is not None:
+            self.estimator.setInput("$use_builtin_lstm_fn", str(use_builtin_lstm_fn).upper())
+        if perform_fused_backward_update is not None:
+            self.estimator.setInput("$perform_fused_backward_update", str(perform_fused_backward_update).upper())
+        if weight_parallel_batches is not None:
+            self.estimator.setInput("$weight_parallel_batches", str(weight_parallel_batches).upper())
         if output_activations is not None:
             self.estimator.setInput(
                 "$output_activations",
@@ -1010,7 +1028,7 @@ class Keras2DML(Caffe2DML):
     """
 
     def __init__(self, sparkSession, keras_model, input_shape=None, transferUsingDF=False, load_keras_weights=True, weights=None, labels=None,
-                 batch_size=64, max_iter=2000, test_iter=0, test_interval=500, display=100, lr_policy="step", weight_decay=0, regularization_type="L2"):
+                 lr_policy="step", weight_decay=0, regularization_type="L2"):
         """
         Performs training/prediction for a given keras model.
 
@@ -1023,11 +1041,6 @@ class Keras2DML(Caffe2DML):
         load_keras_weights: whether to load weights from the keras_model. If False, the weights will be initialized to random value using NN libraries' init method  (default: True)
         weights: directory whether learned weights are stored (default: None)
         labels: file containing mapping between index and string labels (default: None)
-        batch_size: size of the input batch (default: 64)
-        max_iter: maximum number of iterations (default: 2000)
-        test_iter: test_iter for caffe solver (default: 0)
-        test_interval: test_interval for caffe solver (default: 500)
-        display: display for caffe solver (default: 100)
         lr_policy: learning rate policy for caffe solver (default: "step")
         weight_decay: regularation strength (default: 0, recommended: 5e-4)
         regularization_type: regularization type (default: "L2")
@@ -1055,6 +1068,8 @@ class Keras2DML(Caffe2DML):
         createJavaObject(sparkSession._sc, 'dummy')
         if not hasattr(keras_model, 'optimizer'):
             raise Exception('Please compile the model before passing it to Keras2DML')
+        # Default values for Caffe solver. These will be overriden by the fit method.
+        batch_size, max_iter, test_iter, test_interval, display = 32, 2000, 0, 500, 100
         convertKerasToCaffeNetwork(
             keras_model,
             self.name + ".proto",
@@ -1071,6 +1086,7 @@ class Keras2DML(Caffe2DML):
             weight_decay,
             regularization_type)
         self.weights = tempfile.mkdtemp() if weights is None else weights
+        self.keras_model = keras_model
         if load_keras_weights:
             convertKerasToSystemMLModel(
                 sparkSession, keras_model, self.weights)
@@ -1095,3 +1111,24 @@ class Keras2DML(Caffe2DML):
     def close(self):
         import shutil
         shutil.rmtree(weights)
+
+    def fit(self, X, y=None, batch_size=32, epochs=1, validation_split=0.0, validation_data=None):
+        # verbose, callbacks flags are not supported
+        self.estimator.modifySolverParam("batch_size", str(batch_size))
+        self.estimator.modifySolverParam("epochs", str(epochs))
+        self.estimator.modifySolverParam("validation_split", str(validation_split))
+        if batch_size <= 0 or epochs <= 0 or validation_split < 0:
+            raise ValueError('Incorrect parameters to fit method: batch_size=' +  str(batch_size) + ', epochs=' +
+                             str(epochs) + ', validation_split=' + str(validation_split))
+        if validation_data is not None:
+            X_val, y_val = validation_data[0], validation_data[1]
+            if isinstance(y_val, np.ndarray) and len(y_val.shape) == 1:
+                # Since we know that mllearn always needs a column vector
+                y_val = np.matrix(y_val).T
+                y_val = convertToMatrixBlock(self.sc, y_val)
+                self.estimator.setValidationData(convertToMatrixBlock(self.sc, X_val), y_val)
+        if y is not None:
+            super(Keras2DML, self).fit(X, y)
+        else:
+            super(Keras2DML, self).fit(X)
+

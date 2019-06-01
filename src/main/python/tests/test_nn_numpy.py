@@ -28,6 +28,8 @@
 #   - Python 2: `PYSPARK_PYTHON=python2 spark-submit --master local[*] --driver-memory 10g  --driver-class-path ../../../../target/SystemML.jar,../../../../target/systemml-*-extra.jar test_nn_numpy.py`
 #   - Python 3: `PYSPARK_PYTHON=python3 spark-submit --master local[*] --driver-memory 10g --driver-class-path SystemML.jar,systemml-*-extra.jar test_nn_numpy.py`
 
+# Test with Keras 2.1.5 and Tensorflow 1.11.0
+
 # Make the `systemml` package importable
 import os
 os.environ['CUDA_DEVICE_ORDER'] = 'PCI_BUS_ID'
@@ -36,11 +38,13 @@ import sys
 path = os.path.join(os.path.dirname(os.path.realpath(__file__)), "../")
 sys.path.insert(0, path)
 
+TEST_GPU = False
+
 import unittest
 
 import numpy as np
 from keras.models import Sequential
-from keras.layers import Input, Dense, Conv2D, MaxPooling2D, Dropout, Flatten, LSTM, UpSampling2D, SimpleRNN, Activation
+from keras.layers import Input, Dense, Conv2D, MaxPooling2D, Dropout, Flatten, LSTM, UpSampling2D, SimpleRNN, Activation, ZeroPadding2D
 from keras.optimizers import SGD
 from keras import backend as K
 from keras.models import Model
@@ -48,20 +52,17 @@ from systemml.mllearn import Keras2DML
 from pyspark.sql import SparkSession
 from pyspark import SparkContext
 from keras.utils import np_utils
-from scipy import stats
-from sklearn.preprocessing import normalize
 from operator import mul
 
 batch_size = 32
 K.set_image_data_format('channels_first')
-# K.set_image_dim_ordering("th")
 
-def get_tensor(shape, random=True):
+def get_tensor(shape):
     if shape[0] is None:
         # Use the first dimension is None, use batch size:
         shape = list(shape)
         shape[0] = batch_size
-    return (np.random.randint(100, size=shape) + 1) / 100
+    return (np.random.randint(1000, size=shape).astype(np.float32) + 1) / 1000
 
 tmp_dir = 'tmp_dir'
 
@@ -82,18 +83,24 @@ def get_input_output_shape(layers):
     return tmp_keras_model.layers[0].input_shape, tmp_keras_model.layers[-1].output_shape
 
 def get_one_hot_encoded_labels(output_shape):
-    output_cells = reduce(mul, list(output_shape[1:]), 1)
+    try:
+        output_cells = reduce(mul, list(output_shape[1:]), 1)
+    except NameError:
+        # As per https://www.artima.com/weblogs/viewpost.jsp?thread=98196, reduce was moved to functools in later versions
+        from functools import reduce
+        output_cells = reduce(mul, list(output_shape[1:]), 1)
     y = np.array(np.random.choice(output_cells, batch_size))
     y[0] = output_cells - 1
     one_hot_labels = np_utils.to_categorical(y, num_classes=output_cells)
     return one_hot_labels
 
 def get_sysml_model(keras_model):
-    sysml_model = Keras2DML(spark, keras_model, weights=tmp_dir, max_iter=1, batch_size=batch_size)
+    sysml_model = Keras2DML(spark, keras_model, weights=tmp_dir)
     # For apples-to-apples comparison of output probabilities:
     # By performing one-hot encoding outside, we ensure that the ordering of the TF columns
     # matches that of SystemML
     sysml_model.set(train_algo='batch', perform_one_hot_encoding=False)
+    sysml_model.setGPU(TEST_GPU)
     # print('Script:' + str(sysml_model.get_training_script()))
     return sysml_model
 
@@ -118,25 +125,20 @@ def base_test(layers, add_dense=False, test_backward=True):
     sysml_model = get_sysml_model(keras_model)
     keras_tensor = get_tensor(in_shape)
     sysml_matrix = keras_tensor.reshape((batch_size, -1))
-    #if len(keras_tensor.shape) == 4:
-    #    keras_tensor = np.flip(keras_tensor, 1)
+    # if len(keras_tensor.shape) == 4:
+    #     keras_tensor = np.flip(keras_tensor, 1)
     # --------------------------------------
     sysml_preds = sysml_model.predict_proba(sysml_matrix)
     if test_backward:
         one_hot_labels = get_one_hot_encoded_labels(keras_model.layers[-1].output_shape)
-        sysml_model.fit(sysml_matrix, one_hot_labels)
+        sysml_model.fit(sysml_matrix, one_hot_labels, batch_size=batch_size)
         sysml_preds = sysml_model.predict_proba(sysml_matrix)
     keras_preds = keras_model.predict(keras_tensor)
     if test_backward:
         keras_model.train_on_batch(keras_tensor, one_hot_labels)
         keras_preds = keras_model.predict(keras_tensor)
     # --------------------------------------
-    if len(output_shape) == 4:
-        # Flatten doesnot respect channel_first, so reshuffle the dimensions:
-        keras_preds = keras_preds.reshape((batch_size, output_shape[2], output_shape[3], output_shape[1]))
-        keras_preds = np.swapaxes(keras_preds, 2, 3)  # (h,w,c) -> (h,c,w)
-        keras_preds = np.swapaxes(keras_preds, 1, 2)  # (h,c,w) -> (c,h,w)
-    elif len(output_shape) > 4:
+    if len(output_shape) > 4:
         raise Exception('Unsupported output shape:' + str(output_shape))
     # --------------------------------------
     return sysml_preds, keras_preds, keras_model, output_shape
@@ -145,9 +147,20 @@ def debug_layout(sysml_preds, keras_preds):
     for i in range(len(keras_preds.shape)):
         print('After flipping along axis=' + str(i) + ' => ' + str(np.allclose(sysml_preds, np.flip(keras_preds, i).flatten())))
 
+def allclose(sysml_preds, keras_preds, output_shape):
+    ret = np.allclose(sysml_preds.flatten(), keras_preds.flatten())
+    if len(output_shape) == 4 and not ret:
+        # Required only for older version of TensorFlow where
+        # Flatten doesnot respect channel_first, so reshuffle the dimensions:
+        keras_preds = keras_preds.reshape((batch_size, output_shape[2], output_shape[3], output_shape[1]))
+        keras_preds = np.swapaxes(keras_preds, 2, 3)  # (h,w,c) -> (h,c,w)
+        keras_preds = np.swapaxes(keras_preds, 1, 2)  # (h,c,w) -> (c,h,w)
+        ret = np.allclose(sysml_preds.flatten(), keras_preds.flatten())
+    return ret
+
 def test_forward(layers):
     sysml_preds, keras_preds, keras_model, output_shape = base_test(layers, test_backward=False)
-    ret = np.allclose(sysml_preds.flatten(), keras_preds.flatten())
+    ret = allclose(sysml_preds, keras_preds, output_shape)
     if not ret:
         print('The forward test failed for the model:' + str(keras_model.summary()))
         print('SystemML output:' + str(sysml_preds))
@@ -158,7 +171,7 @@ def test_forward(layers):
 
 def test_backward(layers):
     sysml_preds, keras_preds, keras_model, output_shape = base_test(layers, test_backward=True)
-    ret = np.allclose(sysml_preds.flatten(), keras_preds.flatten())
+    ret = allclose(sysml_preds, keras_preds, output_shape)
     if not ret:
         print('The backward test failed for the model:' + str(keras_model.summary()))
         print('SystemML output:' + str(sysml_preds))
@@ -179,7 +192,8 @@ class TestNNLibrary(unittest.TestCase):
     def test_lstm_forward1(self):
         self.failUnless(test_forward(LSTM(2, return_sequences=True, activation='tanh', stateful=False, recurrent_activation='sigmoid', input_shape=(3, 4))))
 
-    #def test_lstm_backward1(self):
+    # TODO:
+    # def test_lstm_backward1(self):
     #    self.failUnless(test_backward(LSTM(2, return_sequences=True, activation='tanh', stateful=False, recurrent_activation='sigmoid',  input_shape=(3, 4))))
 
     def test_lstm_forward2(self):
@@ -261,6 +275,24 @@ class TestNNLibrary(unittest.TestCase):
 
     def test_upsampling_backward(self):
         self.failUnless(test_backward(UpSampling2D(size=(2, 2), input_shape=(3, 64, 32))))
+
+    def test_zeropadding_forward(self):
+        self.failUnless(test_forward(ZeroPadding2D(padding=1, input_shape=(3, 64, 32))))
+
+    def test_zeropadding_backward(self):
+        self.failUnless(test_backward(ZeroPadding2D(padding=1, input_shape=(3, 64, 32))))
+
+    def test_zeropadding_forward1(self):
+        self.failUnless(test_forward(ZeroPadding2D(padding=(1, 2), input_shape=(3, 64, 32))))
+
+    def test_zeropadding_backward1(self):
+        self.failUnless(test_backward(ZeroPadding2D(padding=(1, 2), input_shape=(3, 64, 32))))
+
+    def test_zeropadding_forward2(self):
+        self.failUnless(test_forward(ZeroPadding2D(padding=((3, 2), (1, 3)), input_shape=(3, 64, 32))))
+
+    def test_zeropadding_backward2(self):
+        self.failUnless(test_backward(ZeroPadding2D(padding=((3, 2), (1, 3)), input_shape=(3, 64, 32))))
 
 if __name__ == '__main__':
     unittest.main()

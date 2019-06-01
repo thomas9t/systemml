@@ -42,8 +42,7 @@ trait Scheduler {
     val LOG: Log = LogFactory.getLog(classOf[Scheduler].getName)
     var executorService: ExecutorService = _
     protected var _statistics = true
-    implicit val ec = ExecutionContext.fromExecutor(
-        Executors.newFixedThreadPool(1000))
+    implicit val ec = ExecutionContext.global
     var executorTypes = Array[String]()
     var modelManager = ReferenceCountedModelManager
 
@@ -132,4 +131,3 @@ trait Scheduler {
       */
     private[serving] def enqueue(request: PredictionRequest, model: Model): Future[PredictionResponse]
 }
-

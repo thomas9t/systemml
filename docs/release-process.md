@@ -255,22 +255,25 @@ this OS X example.
 
 ## Python Tests
 
-For Spark 1.*, the Python tests at (`src/main/python/tests`) can be executed in the following manner:
 
-	PYSPARK_PYTHON=python3 pyspark --driver-class-path SystemML.jar test_matrix_agg_fn.py
-	PYSPARK_PYTHON=python3 pyspark --driver-class-path SystemML.jar test_matrix_binary_op.py
-	PYSPARK_PYTHON=python3 pyspark --driver-class-path SystemML.jar test_mlcontext.py
-	PYSPARK_PYTHON=python3 pyspark --driver-class-path SystemML.jar test_mllearn_df.py
-	PYSPARK_PYTHON=python3 pyspark --driver-class-path SystemML.jar test_mllearn_numpy.py
+Install Keras and Tensorflow:
 
-For Spark 2.*, pyspark can't be used to run the Python tests, so they can be executed using
-spark-submit:
+	python3 -m pip install --user keras=='2.1.5'
+	python3 -m pip install --user tensorflow=='1.11.0'
 
-	spark-submit --driver-class-path SystemML.jar test_matrix_agg_fn.py
-	spark-submit --driver-class-path SystemML.jar test_matrix_binary_op.py
-	spark-submit --driver-class-path SystemML.jar test_mlcontext.py
-	spark-submit --driver-class-path SystemML.jar test_mllearn_df.py
-	spark-submit --driver-class-path SystemML.jar test_mllearn_numpy.py
+Compile SystemML distribution:
+
+	mvn package -P distribution
+	cd src/main/python/tests/
+
+For Spark 2.*, the Python tests at (`src/main/python/tests`) can be executed in the following manner:
+
+	PYSPARK_PYTHON=python3 spark-submit --driver-class-path ../../../../target/SystemML.jar,../../../../target/systemml-*-SNAPSHOT-extra.jar test_matrix_agg_fn.py
+	PYSPARK_PYTHON=python3 spark-submit --driver-class-path ../../../../target/SystemML.jar,../../../../target/systemml-*-SNAPSHOT-extra.jar test_matrix_binary_op.py
+	PYSPARK_PYTHON=python3 spark-submit --driver-class-path ../../../../target/SystemML.jar,../../../../target/systemml-*-SNAPSHOT-extra.jar test_mlcontext.py
+	PYSPARK_PYTHON=python3 spark-submit --driver-class-path ../../../../target/SystemML.jar,../../../../target/systemml-*-SNAPSHOT-extra.jar test_mllearn_df.py
+	PYSPARK_PYTHON=python3 spark-submit --driver-class-path ../../../../target/SystemML.jar,../../../../target/systemml-*-SNAPSHOT-extra.jar test_mllearn_numpy.py
+	PYSPARK_PYTHON=python3 spark-submit --driver-class-path ../../../../target/SystemML.jar,../../../../target/systemml-*-SNAPSHOT-extra.jar test_nn_numpy.py
 
 
 ## Check LICENSE and NOTICE Files
@@ -385,7 +388,7 @@ file and remove all the `@Ignore` annotations from all the tests. Then run the N
 # Run other GPU Unit Tests 
 
 	rm result.txt
-	for t in AggregateUnaryOpTests  BinaryOpTests  MatrixMatrixElementWiseOpTests  RightIndexingTests AppendTest  MatrixMultiplicationOpTest ReorgOpTests ScalarMatrixElementwiseOpTests UnaryOpTests
+	for t in AggregateUnaryOpTests AggregateTernaryTests  BinaryOpTests  MatrixMatrixElementWiseOpTests  RightIndexingTests AppendTest  MatrixMultiplicationOpTest ReorgOpTests ScalarMatrixElementwiseOpTests UnaryOpTests LstmTest LstmCPUTest
 	do
 		mvn -Dit.test="org.apache.sysml.test.gpu."$t verify -PgpuTests &> tmp.txt
 		SUCCESS=`grep "BUILD SUCCESS" tmp.txt`
@@ -497,3 +500,26 @@ Commit the update to `documentation.html` to publish the website update.
 
 The versioned project documentation is now deployed to the main website, and the
 [Documentation Page](http://systemml.apache.org/documentation) contains a link to the versioned documentation.
+
+## Update Crawler configuration for the search indexing
+
+- Create a PR or an issue to update the version number in the crawler configuration. Please see the `start_urls` tag in the file [https://github.com/algolia/docsearch-configs/blob/master/configs/apache_systemml.json](https://github.com/algolia/docsearch-configs/blob/master/configs/apache_systemml.json).
+- If the Algolia team provides us an updated `apiKey` or `indexName` credentials, then please update the corresponding entries in the file 
+[https://github.com/apache/systemml/blob/master/docs/_layouts/global.html](https://github.com/apache/systemml/blob/master/docs/_layouts/global.html) 
+(see for `Algolia search section` in the previously mentioned HTML file).
+
+## Upload Python package to PyPI
+
+Download the released `systemml-*-python.tar.gz` and `systemml-*-python.tar.gz`.
+
+	$ wget https://dist.apache.org/repos/dist/release/systemml/1.0.0/systemml-1.0.0-python.tar.gz
+	$ wget https://dist.apache.org/repos/dist/release/systemml/1.0.0/systemml-1.0.0-python.tar.gz.asc
+	
+Rename the files to remove `-python` suffix.
+
+	$ mv systemml-1.0.0-python.tar.gz systemml-1.0.0.tar.gz
+	$ mv systemml-1.0.0-python.tar.gz.asc systemml-1.0.0.tar.gz.asc
+
+Upload the Python package to PyPI using [twine](https://pypi.org/project/twine/).
+
+	$ twine upload -u systemml systemml-1.0.0.tar.gz systemml-1.0.0.tar.gz.asc 

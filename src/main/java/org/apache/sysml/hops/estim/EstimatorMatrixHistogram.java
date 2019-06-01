@@ -59,7 +59,7 @@ public class EstimatorMatrixHistogram extends SparsityEstimator
 		return estim(root, true);
 	}
 	
-	private MatrixCharacteristics estim(MMNode root, boolean topLevel) {
+	public MatrixCharacteristics estim(MMNode root, boolean topLevel) {
 		//NOTE: not estimateInputs due to handling of topLevel
 		MatrixHistogram h1 = getCachedSynopsis(root.getLeft());
 		MatrixHistogram h2 = getCachedSynopsis(root.getRight());
@@ -72,7 +72,8 @@ public class EstimatorMatrixHistogram extends SparsityEstimator
 		}
 		
 		//sketch propagation for intermediates other than final result
-		h2.setData(root.getRight().isLeaf() ? root.getRight().getData() : null);
+		if( h2 != null && root.getRight() != null )
+			h2.setData(root.getRight().isLeaf() ? root.getRight().getData() : null);
 		MatrixHistogram outMap = MatrixHistogram
 			.deriveOutputHistogram(h1, h2, ret, root.getOp(), root.getMisc());
 		root.setSynopsis(outMap);
