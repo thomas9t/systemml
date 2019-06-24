@@ -149,14 +149,16 @@ object ReferenceCountedModelManager extends ModelManager {
     }
 
     def release(name: String) : Unit = {
-        modelRefCounts(name).decrement()
-        releaseMemory(models(name).weightMem)
+        if (cleanupEnabled) {
+            modelRefCounts(name).decrement()
+            releaseMemory(models(name).weightMem)
 
-        LOG.debug("Releasing model: " + name + " Ref count: " + modelRefCounts(name).longValue())
-        if (modelRefCounts(name).longValue() == 0) {
-            models(name).script.synchronized {
-                if (modelRefCounts(name).longValue() == 0) {
-                    models(name).script.foreach { x => x._2.clearPinnedData() }
+            LOG.debug("Releasing model: " + name + " Ref count: " + modelRefCounts(name).longValue())
+            if (modelRefCounts(name).longValue() == 0) {
+                models(name).script.synchronized {
+                    if (modelRefCounts(name).longValue() == 0) {
+                        models(name).script.foreach { x => x._2.clearPinnedData() }
+                    }
                 }
             }
         }
