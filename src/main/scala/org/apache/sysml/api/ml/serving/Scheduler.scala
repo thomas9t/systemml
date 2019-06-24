@@ -58,6 +58,7 @@ trait Scheduler {
 
         executorService = Executors.newFixedThreadPool(numCores + numGpus)
         modelManager.setAvailableMemory((cpuMemoryBudgetInBytes*0.80).toLong)
+        modelManager.disableCleanup()
 
         if (numCores > 0)
             executorTypes :+= "CPU"
