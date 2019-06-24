@@ -388,11 +388,14 @@ public class ExecutionContext {
 			throw new DMLRuntimeException("No matrix object available for variable:" + varName);
 		}
 
+		System.err.println("WALRUS 1");
 		if( mo.getGPUObject(gCtx) == null ) {
+			System.err.println("WALRUS 2");
 			GPUObject newGObj = gCtx.createGPUObject(mo);
 			mo.setGPUObject(gCtx, newGObj);
 		}
 		// No need to perform acquireRead here because it is performed in copyFromHostToDevice
+		System.err.println("WALRUS 3");
 		mo.getGPUObject(gCtx).acquireDeviceRead(opcode);
 		return mo;
 	}
