@@ -54,7 +54,11 @@ object NonBatchingScheduler extends Scheduler {
         val statistics = if (_statistics) RequestStatistics() else null
         val schedulingRequest = SchedulingRequest(
             request, model, new CountDownLatch(1), System.nanoTime(), null, statistics)
-        if (_statistics) statistics.queueSize = requestQueue.size()
+        if (_statistics) {
+            statistics.queueSize = requestQueue.size()
+            statistics.preprocWaitTime = System.nanoTime() - request.receivedTime
+            statistics.receivedTime = request.receivedTime
+        }
         requestQueue.add(schedulingRequest)
         counter += 1
         try {

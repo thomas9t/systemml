@@ -70,7 +70,9 @@ case class RequestStatistics(var batchSize: Int = -1,
                              var queueWaitTime: Long = -1,
                              var queueSize: Int = -1,
                              var execMode: Int = 0,
-                             var preprocWaitTime: Long = -1)
+                             var preprocWaitTime: Long = -1,
+                             var receivedTime: Long = -1,
+                             var responseTime: Long = -1)
 case class PredictionRequestExternal(name: String, data: Array[Double], rows: Int, cols: Int)
 case class PredictionResponseExternal(response: Array[Double], rows: Int, cols: Int, statistics: RequestStatistics)
 
@@ -91,7 +93,7 @@ case class PredictionResponse(response: MatrixBlock, batchSize: Int, statistics:
 case class MatrixBlockContainer(numRows: Long, numCols: Long, nnz: Long, sum: Double, data: MatrixBlock)
 
 trait PredictionJsonProtocol extends SprayJsonSupport with DefaultJsonProtocol {
-    implicit val RequestStatisticsFormat = jsonFormat13(RequestStatistics)
+    implicit val RequestStatisticsFormat = jsonFormat15(RequestStatistics)
     implicit val predictionRequestExternalFormat = jsonFormat4(PredictionRequestExternal)
     implicit val predictionResponseExternalFormat = jsonFormat4(PredictionResponseExternal)
 }
@@ -237,7 +239,6 @@ object PredictionService extends PredictionJsonProtocol with AddModelJsonProtoco
         // For now the models need to be loaded every time. TODO: pass the local to serialized models via commandline
         var models = Map[String, Model]()
 
-        // TODO: Set the scheduler using factory
         scheduler = SchedulerFactory.getScheduler(schedulerType)
         val maxMemory = Runtime.getRuntime.maxMemory()  // total memory is just what the JVM has currently allocated
 
@@ -389,6 +390,7 @@ object PredictionService extends PredictionJsonProtocol with AddModelJsonProtoco
             if (response.statistics != null) {
                 response.statistics.requestDeserializationTime = deserializationTime
                 response.statistics.responseSerializationTime = serializationTime
+                response.statistics.responseTime = System.nanoTime()
             }
             PredictionResponseExternal(dataArray, rows, cols, response.statistics)
         } else {

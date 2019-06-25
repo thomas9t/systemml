@@ -200,10 +200,10 @@ object LocalityAwareScheduler extends BatchingScheduler {
         val statistics = if (_statistics) RequestStatistics() else null
         val schedulingRequest = SchedulingRequest(
             request, model, new CountDownLatch(1), System.nanoTime(), null, statistics)
-
         if (_statistics) {
             statistics.queueSize = modelQueues.get(model.name).size
             statistics.preprocWaitTime = System.nanoTime() - request.receivedTime
+            statistics.receivedTime = request.receivedTime
         }
 
         modelQueues.get(model.name).add(schedulingRequest)
