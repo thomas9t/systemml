@@ -109,10 +109,10 @@ class JmlcExecutor(scheduler: Scheduler, execType: String, name: String, gCtx: G
                 val modelAcquireTime = System.nanoTime() - modelAcquireStart
                 script.setMatrix(req.model.inputVarName, batchedMatrixData, false)
                 val execStart = System.nanoTime()
-                script.setStatistics(true)
+                //script.setStatistics(true)
                 val res = script.executeScript().getMatrixBlock(req.model.outputVarName)
                 val execTime = System.nanoTime() - execStart
-                System.err.println(script.statistics())
+                //System.err.println(script.statistics())
                 responses = BatchingUtils.unbatchRequests(requests, res)
 
                 val modelReleaseStart = System.nanoTime()
