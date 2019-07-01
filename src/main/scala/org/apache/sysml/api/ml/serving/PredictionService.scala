@@ -450,8 +450,9 @@ object PredictionService extends PredictionJsonProtocol with AddModelJsonProtoco
     }
 
     def processPredictionRequest(request : PredictionRequestExternal) : PredictionRequest = {
-        val mat = new MatrixBlock(request.rows, request.cols, false)
-        mat.init(request.data, request.rows, request.cols)
+//        val mat = new MatrixBlock(request.rows, request.cols, false)
+//        mat.init(request.data, request.rows, request.cols)
+        val mat = MatrixBlock.randOperations(1, 224*224*3, 1.0, 0, 1, "uniform", 1234)
         PredictionRequest(mat, request.name, request.rows, System.nanoTime())
     }
 
