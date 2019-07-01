@@ -19,6 +19,9 @@
 package org.apache.sysml.api.ml.serving
 
 import java.io.File
+import java.nio.ByteBuffer
+import java.nio.DoubleBuffer
+import java.util.Base64
 
 import akka.http.scaladsl.server.StandardRoute
 import akka.http.scaladsl.server.Directives._
@@ -73,7 +76,8 @@ case class RequestStatistics(var batchSize: Int = -1,
                              var preprocWaitTime: Long = -1,
                              var receivedTime: Long = -1,
                              var responseTime: Long = -1)
-case class PredictionRequestExternal(name: String, data: Array[Double], rows: Int, cols: Int)
+case class PredictionRequestExternal(name: String, data: Array[Byte], rows: Int, cols: Int, rescale: Int)
+
 case class PredictionResponseExternal(response: Array[Double], rows: Int, cols: Int, statistics: RequestStatistics)
 
 case class AddModelRequest(name: String, dml: String, inputVarName: String,
@@ -94,7 +98,7 @@ case class MatrixBlockContainer(numRows: Long, numCols: Long, nnz: Long, sum: Do
 
 trait PredictionJsonProtocol extends SprayJsonSupport with DefaultJsonProtocol {
     implicit val RequestStatisticsFormat = jsonFormat15(RequestStatistics)
-    implicit val predictionRequestExternalFormat = jsonFormat4(PredictionRequestExternal)
+    implicit val predictionRequestExternalFormat = jsonFormat5(PredictionRequestExternal)
     implicit val predictionResponseExternalFormat = jsonFormat4(PredictionResponseExternal)
 }
 
@@ -450,9 +454,11 @@ object PredictionService extends PredictionJsonProtocol with AddModelJsonProtoco
     }
 
     def processPredictionRequest(request : PredictionRequestExternal) : PredictionRequest = {
-//        val mat = new MatrixBlock(request.rows, request.cols, false)
-//        mat.init(request.data, request.rows, request.cols)
-        val mat = MatrixBlock.randOperations(1, 224*224*3, 1.0, 0, 1, "uniform", 1234)
+        val mat = new MatrixBlock(request.rows, request.cols, false)
+        val buf : DoubleBuffer = ByteBuffer.wrap(Base64.getDecoder.decode(request.data)).asDoubleBuffer()
+        val data = Array[Double](buf.limit())
+        buf.get(data)
+        mat.init(data, request.rows, request.cols)
         PredictionRequest(mat, request.name, request.rows, System.nanoTime())
     }
 
