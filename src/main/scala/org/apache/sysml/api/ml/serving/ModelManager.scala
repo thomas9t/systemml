@@ -127,7 +127,7 @@ object ReferenceCountedModelManager extends ModelManager {
 
         val execName = if (executor.getExecType == "GPU") executor.getName else executor.getExecType
         val ps = models(name).script(execName)
-        if (modelRefCounts(name).longValue() > 0 || ps.hasPinnedData) {
+        if (ps.hasPinnedData) {
             modelRefCounts(name).increment()
             return ps.clone(false)
         }
