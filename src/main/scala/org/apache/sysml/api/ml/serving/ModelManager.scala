@@ -154,13 +154,13 @@ object ReferenceCountedModelManager extends ModelManager {
             releaseMemory(models(name).weightMem)
 
             LOG.debug("Releasing model: " + name + " Ref count: " + modelRefCounts(name).longValue())
-            if (modelRefCounts(name).longValue() == 0) {
+            /*if (modelRefCounts(name).longValue() == 0) {
                 models(name).script.synchronized {
                     if (modelRefCounts(name).longValue() == 0) {
                         models(name).script.foreach { x => x._2.clearPinnedData() }
                     }
                 }
-            }
+            }*/
         }
     }
 

@@ -20,7 +20,7 @@ package org.apache.sysml.api.ml.serving
 
 import java.io.File
 import java.nio.ByteBuffer
-import java.nio.DoubleBuffer
+import java.nio.IntBuffer
 import java.util.Base64
 
 import akka.http.scaladsl.server.StandardRoute
@@ -76,7 +76,7 @@ case class RequestStatistics(var batchSize: Int = -1,
                              var preprocWaitTime: Long = -1,
                              var receivedTime: Long = -1,
                              var responseTime: Long = -1)
-case class PredictionRequestExternal(name: String, data: Array[Byte], rows: Int, cols: Int, rescale: Int)
+case class PredictionRequestExternal(name: String, data: String, rows: Int, cols: Int, rescale: Int)
 
 case class PredictionResponseExternal(response: Array[Double], rows: Int, cols: Int, statistics: RequestStatistics)
 
@@ -455,10 +455,10 @@ object PredictionService extends PredictionJsonProtocol with AddModelJsonProtoco
 
     def processPredictionRequest(request : PredictionRequestExternal) : PredictionRequest = {
         val mat = new MatrixBlock(request.rows, request.cols, false)
-        val buf : DoubleBuffer = ByteBuffer.wrap(Base64.getDecoder.decode(request.data)).asDoubleBuffer()
-        val data = Array[Double](buf.limit())
+        val buf : IntBuffer = ByteBuffer.wrap(Base64.getDecoder.decode(request.data)).asIntBuffer()
+        val data = Array[Int](buf.limit())
         buf.get(data)
-        mat.init(data, request.rows, request.cols)
+        mat.init(data.map(_.toDouble), request.rows, request.cols)
         PredictionRequest(mat, request.name, request.rows, System.nanoTime())
     }
 
