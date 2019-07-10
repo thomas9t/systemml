@@ -170,14 +170,14 @@ object PredictionService extends PredictionJsonProtocol with AddModelJsonProtoco
         akka.http.client.idle-timeout=infinite
         akka.http.host-connection-pool.idle-timeout=infinite
         akka.http.host-connection-pool.client.idle-timeout=infinite
-        akka.http.server.max-connections=100000
+        akka.http.server.max-connections=1500
     """)
     val basicConf = ConfigFactory.load()
     val combined = customConf.withFallback(basicConf)
     implicit val system = ActorSystem("systemml-prediction-service", ConfigFactory.load(combined))
     implicit val materializer = ActorMaterializer()
     implicit val executionContext = ExecutionContext.fromExecutor(
-        Executors.newFixedThreadPool(1000))
+        Executors.newFixedThreadPool(1500))
     implicit val timeout = akka.util.Timeout(300.seconds)
     val userPassword = new HashMap[String, String]()
     var bindingFuture: Future[Http.ServerBinding] = null
@@ -259,6 +259,7 @@ object PredictionService extends PredictionJsonProtocol with AddModelJsonProtoco
                                 validate(models.contains(request.name), "The model is not available.") {
                                     try {
                                         currNumRequests.increment()
+                                        println("CURR NUM REQUESTS => " + currNumRequests)
                                         val start = System.nanoTime()
                                         val processedRequest = processPredictionRequest(request)
                                         val deserializationTime = System.nanoTime() - start
