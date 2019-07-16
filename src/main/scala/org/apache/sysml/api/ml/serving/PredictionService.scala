@@ -32,7 +32,6 @@ import akka.stream.ActorMaterializer
 import org.apache.commons.cli.PosixParser
 import com.typesafe.config.ConfigFactory
 
-import java.util.concurrent._
 import scala.concurrent.duration._
 import java.util.HashMap
 
@@ -48,14 +47,11 @@ import org.apache.sysml.runtime.io.IOUtilFunctions
 import org.apache.sysml.api.jmlc.Connection
 import org.apache.sysml.api.jmlc.PreparedScript
 import org.apache.sysml.conf.ConfigurationManager
-import org.apache.sysml.conf.DMLConfig;
+import org.apache.sysml.conf.DMLConfig
 import org.apache.sysml.runtime.instructions.gpu.context.GPUContextPool
 import org.apache.sysml.runtime.matrix.MatrixCharacteristics
 import org.apache.sysml.runtime.util.DataConverter
-import org.apache.commons.logging.Log
 import org.apache.commons.logging.LogFactory
-
-import scala.concurrent.ExecutionContext
 
 // import scala.concurrent.ExecutionContext
 
@@ -176,8 +172,7 @@ object PredictionService extends PredictionJsonProtocol with AddModelJsonProtoco
     val combined = customConf.withFallback(basicConf)
     implicit val system = ActorSystem("systemml-prediction-service", ConfigFactory.load(combined))
     implicit val materializer = ActorMaterializer()
-    implicit val executionContext = ExecutionContext.fromExecutor(
-        Executors.newFixedThreadPool(1500))
+    implicit val executionContext = system.dispatchers.lookup("blocking-io-dispatcher")
     implicit val timeout = akka.util.Timeout(300.seconds)
     val userPassword = new HashMap[String, String]()
     var bindingFuture: Future[Http.ServerBinding] = null
