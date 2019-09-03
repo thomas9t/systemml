@@ -61,7 +61,7 @@ object ExecutorQueueManager extends Runnable {
                             if ((nextRequest ne queue.getPrevRequest(m)) && (qsize > 0)) {
                                 val nextBatchSize = min(qsize, _scheduler.getOptimalBatchSize(m, queue.getExecType))
                                 assert(nextBatchSize > 0, "An error occurred - batch size should not be zero")
-                                LOG.debug("Enqueuing: " + nextBatchSize + " for: " + m + " onto: " + queue.getName)
+                                LOG.info("Enqueuing: " + nextBatchSize + " for: " + m + " onto: " + queue.getName)
                                 val nextBatch = Batch(
                                     nextBatchSize, nextBatchSize*_scheduler.getExpectedExecutionTime(m),
                                     nextRequest.receivedTime - System.nanoTime(), nextRequest.model.name)
@@ -124,7 +124,7 @@ object LocalityAwareScheduler extends BatchingScheduler {
         if (localQueue.size() > 0 || globalDiskQueue.size() > 0 || globalMemQueue.size() > 0) {
             dummyResponse.synchronized {
                 if (localQueue.size() > 0 || globalDiskQueue.size() > 0 || globalMemQueue.size() > 0) {
-                    LOG.debug("Begin scheduling for executor: " + executor.getName)
+                    LOG.info("Begin scheduling for executor: " + executor.getName)
                     val execMode = Array[(BatchQueue, ExecMode.MODE)](
                         (localQueue, ExecMode.LOCAL),
                         (globalDiskQueue, ExecMode.GLOBAL_DISK),
@@ -167,7 +167,11 @@ object LocalityAwareScheduler extends BatchingScheduler {
                         }
 
                         // now we can actually take the original requests out of the model queues
-                        LOG.debug("Scheduling: " + numToDequeue + " for " + batch.modelName + " on " + executor.getName)
+                        LOG.info("Scheduling: " + numToDequeue + 
+                                 " for " + batch.modelName + 
+                                 " on " + executor.getName +
+                                 " using mode " + execMode)
+                        
                         for (_ <- 0 until numToDequeue) {
                             val nextRequest = mqueue.poll()
                             assert(nextRequest != null, "Something is wrong - request should not be null!")
@@ -181,7 +185,7 @@ object LocalityAwareScheduler extends BatchingScheduler {
                             }
                             ret :+= nextRequest
                         }
-                        LOG.debug("Done scheduling on: " + executor.getName)
+                        LOG.info("Done scheduling on: " + executor.getName)
                     }
                 }
             }
