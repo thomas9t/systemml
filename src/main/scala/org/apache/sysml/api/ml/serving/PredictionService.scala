@@ -73,7 +73,9 @@ case class RequestStatistics(var batchSize: Int = -1,
                              var preprocWaitTime: Long = -1,
                              var receivedTime: Long = -1,
                              var responseTime: Long = -1,
-                             var preschedulingTime: Long = -1)
+                             var scheduledTime: Long = -1,
+                             var queuedTime: Long = -1,
+                             var execStartTime: Long = -1)
 case class PredictionRequestExternal(name: String, data: String, rows: Int, cols: Int, rescale: Int)
 
 case class PredictionResponseExternal(response: Array[Double], rows: Int, cols: Int, statistics: RequestStatistics)
@@ -95,7 +97,7 @@ case class PredictionResponse(response: MatrixBlock, batchSize: Int, statistics:
 case class MatrixBlockContainer(numRows: Long, numCols: Long, nnz: Long, sum: Double, data: MatrixBlock)
 
 trait PredictionJsonProtocol extends SprayJsonSupport with DefaultJsonProtocol {
-    implicit val RequestStatisticsFormat = jsonFormat16(RequestStatistics)
+    implicit val RequestStatisticsFormat = jsonFormat18(RequestStatistics)
     implicit val predictionRequestExternalFormat = jsonFormat5(PredictionRequestExternal)
     implicit val predictionResponseExternalFormat = jsonFormat4(PredictionResponseExternal)
 }
