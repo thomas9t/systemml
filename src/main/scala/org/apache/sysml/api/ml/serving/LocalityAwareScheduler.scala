@@ -18,77 +18,10 @@
  */
 package org.apache.sysml.api.ml.serving
 
-import java.util.concurrent.{ConcurrentHashMap, CountDownLatch}
-
-import org.apache.commons.logging.{Log, LogFactory}
+import java.util.concurrent.{CountDownLatch}
 
 import scala.concurrent.Future
 import scala.math.min
-
-object ExecutorQueueManager extends Runnable {
-    val LOG: Log = LogFactory.getLog(ExecutorQueueManager.getClass.getName)
-    var _shutDown = false
-    var _scheduler = LocalityAwareScheduler
-    def shutdown(): Unit = { _shutDown = true }
-
-    override def run() : Unit = {
-        while (!_shutDown) {
-            _scheduler.dummyResponse.synchronized {
-                val schedulableModels = _scheduler.executorTypes.map(
-                    x => _scheduler.getSchedulableModels(x)).reduce(_ union _)
-                if (schedulableModels.nonEmpty) {
-                    for (m <- schedulableModels) {
-                        // every request batch can go to up to three queues
-
-                        // 1. Every batch goes to the global disk queue since the model might get evicted
-                        val diskQueues = _scheduler.executorTypes.map(x => _scheduler.globalDiskQueues.get(x))
-
-                        // 2. If the model is cached in memory, then also put it on the cache queue
-                        var cacheQueues = Array[BatchQueue]()
-                        if (_scheduler.modelManager.isCached(m))
-                            cacheQueues = _scheduler.executorTypes.map(x => _scheduler.globalCacheQueues.get(x))
-
-                        // 3. If the model is local to an executor, then put it on the lowest utilizaiton queue
-                        val localExecutionQueues = getLocalExecutionQueues(m)
-                        val localQueue = if (localExecutionQueues.nonEmpty)
-                            Array[BatchQueue](localExecutionQueues.minBy(x => x.getExpectedExecutionTime))
-                        else Array[BatchQueue]()
-
-                        val queues = diskQueues ++ cacheQueues ++ localQueue
-                        val nextRequest = _scheduler.modelQueues.get(m).peek()
-                        queues.foreach(queue => {
-                            val qsize = _scheduler.modelQueues.get(m).size()
-                            if ((nextRequest ne queue.getPrevRequest(m)) && (qsize > 0)) {
-                                val nextBatchSize = min(qsize, _scheduler.getOptimalBatchSize(m, queue.getExecType))
-                                assert(nextBatchSize > 0, "An error occurred - batch size should not be zero")
-                                val nextBatch = Batch(
-                                    nextBatchSize, nextBatchSize * _scheduler.getExpectedExecutionTime(m),
-                                    nextRequest.receivedTime - System.nanoTime(), nextRequest.model.name)
-                                queue.enqueue(nextBatch)
-                                nextRequest.statistics.queuedTime = System.nanoTime()
-                                LOG.info("Batch enqueued onto: " + queue.getName)
-                            }
-                            queue.updatePrevRequest(m, nextRequest)
-                        })
-                    }
-                }
-            }
-        }
-    }
-
-    def getLocalExecutionQueues(model: String) : Array[BatchQueue] = {
-        val execs = _scheduler.modelManager.getModelLocality(model)
-        var queues = Array[BatchQueue]()
-        if (execs == null)
-            return queues
-
-        _scheduler.modelManager.synchronized({
-            for (ix <- 0 until execs.size()) { _scheduler.executorQueues.get(execs.get(ix)) }
-        })
-
-        queues
-    }
-}
 
 object ExecMode extends Enumeration {
     type MODE = Value
@@ -96,21 +29,10 @@ object ExecMode extends Enumeration {
 }
 
 object LocalityAwareScheduler extends BatchingScheduler {
-    var queueManager : Thread = _
-
-    val globalCacheQueues = new ConcurrentHashMap[String, BatchQueue]()
-    val globalDiskQueues = new ConcurrentHashMap[String, BatchQueue]()
 
     override def start(numCores: Int, cpuMemoryBudgetInBytes: Long, gpus: String): Unit = {
+        LOG.info(s"Starting Basic Batching Scheduler with: ${numCores} CPUs and ${gpus} GPUs")
         super.start(numCores, cpuMemoryBudgetInBytes, gpus)
-
-        executorTypes.foreach ( x => {
-            globalCacheQueues.putIfAbsent(x, new BatchQueue(x, x + "-CACHE"))
-            globalDiskQueues.putIfAbsent(x, new BatchQueue(x, x + "-DISK"))
-        } )
-
-        queueManager = new Thread(ExecutorQueueManager)
-        queueManager.start()
     }
 
     override def addModel(model: Model): Unit = {
@@ -119,80 +41,36 @@ object LocalityAwareScheduler extends BatchingScheduler {
 
     override def schedule(executor: JmlcExecutor) : Array[SchedulingRequest] = {
         var ret = Array[SchedulingRequest]()
-        val localQueue = executorQueues.get(executor)
-        val globalDiskQueue = globalDiskQueues.get(executor.getExecType)
-        val globalMemQueue = globalCacheQueues.get(executor.getExecType)
-        if (localQueue.size() > 0 || globalDiskQueue.size() > 0 || globalMemQueue.size() > 0) {
-            dummyResponse.synchronized {
-                if (localQueue.size() > 0 || globalDiskQueue.size() > 0 || globalMemQueue.size() > 0) {
-                    LOG.info("Begin scheduling for executor: " + executor.getName)
-                    val execMode = Array[(BatchQueue, ExecMode.MODE)](
-                        (localQueue, ExecMode.LOCAL),
-                        (globalDiskQueue, ExecMode.GLOBAL_DISK),
-                        (globalMemQueue, ExecMode.GLOBAL_MEM)
-                    ).filter(x => x._1.size() > 0).maxBy(x => x._1.getExpectedExecutionTime)._2
+        val execType = executor.getExecType
+        dummyResponse.synchronized {
+            val schedulableModels = getSchedulableModels(execType)
+            if (schedulableModels.nonEmpty) {
+                val localQueueUtilization = if (schedulableModels.contains(executor.prevModel))
+                    getExpectedExecutionTime(executor.prevModel) else getExpectedExecutionTime(executor.prevModel)
+                val otherQueueUtilization = (
+                            schedulableModels - executor.prevModel
+                        ).map(x => getExpectedExecutionTime(x)).reduce(_ + _)
+                val mode = if (localQueueUtilization >= otherQueueUtilization) ExecMode.LOCAL else ExecMode.GLOBAL_MEM
+                val nextModel = if (mode == ExecMode.LOCAL)
+                    executor.prevModel else getNextModel(schedulableModels - executor.prevModel, execType)
 
-                    val batch = execMode match {
-                        case ExecMode.LOCAL => localQueue.peek()
-                        case ExecMode.GLOBAL_MEM => globalMemQueue.peek()
-                        case ExecMode.GLOBAL_DISK => globalDiskQueue.peek()
-                    }
-                    assert(batch != null, "Something is wrong. Batch should not be null!")
+                val nextBatchSize = min(modelQueues.get(nextModel).size(),
+                    getOptimalBatchSize(nextModel, execType))
 
-                    // now we need to ask the resource manager if there's enough memory to execute the batch
-                    val model = modelManager.get(batch.modelName)
-
-                    // If there's enough memory we can actually remove the requests from the queue and
-                    // submit them for processing
-                    val mqueue = modelQueues.get(batch.modelName)
-                    val numToDequeue = min(batch.size, mqueue.size())
-
-                    // if this value is zero there are no more requests and the batch is stale
-                    if (numToDequeue == 0) {
-                        execMode match {
-                            case ExecMode.LOCAL => localQueue.poll()
-                            case ExecMode.GLOBAL_DISK => globalDiskQueue.poll()
-                            case ExecMode.GLOBAL_MEM => globalMemQueue.poll()
-                        }
-                    } else {
-                        val memReceived = modelManager.tryAllocMem(model.name, batch.size)
-                        if (memReceived < 0) {
-                            return ret
-                        }
-
-                        // now we need to actually remove the request from the queue since it's going to be processed
-                        execMode match {
-                            case ExecMode.LOCAL => localQueue.poll()
-                            case ExecMode.GLOBAL_DISK => globalDiskQueue.poll()
-                            case ExecMode.GLOBAL_MEM => globalMemQueue.poll()
-                        }
-
-                        // now we can actually take the original requests out of the model queues
-                        LOG.info("Scheduling: " + numToDequeue + 
-                                 " for " + batch.modelName + 
-                                 " on " + executor.getName +
-                                 " using mode " + execMode)
-                        
-                        for (_ <- 0 until numToDequeue) {
-                            val nextRequest = mqueue.poll()
-                            assert(nextRequest != null, "Something is wrong - request should not be null!")
-
-                            nextRequest.memUse = memReceived
-                            nextRequest.statistics.execMode = execMode match {
-                                case ExecMode.LOCAL => 0
-                                case ExecMode.GLOBAL_MEM => 1
-                                case ExecMode.GLOBAL_DISK => 2
-                                case _ => -1
-                            }
-                            nextRequest.statistics.scheduledTime = System.nanoTime()
-                            ret :+= nextRequest
-                        }
-                        LOG.info("Done scheduling on: " + executor.getName)
-                    }
+                assert(nextBatchSize > 0, "Something is wrong. Batch size should not be zero")
+                for (_ <- 0 until nextBatchSize) {
+                    val next = modelQueues.get(nextModel).poll()
+                    assert(next != null, "Something is wrong. Next model should not be null")
+                    ret :+= next
                 }
             }
         }
         ret
+    }
+
+    def getNextModel(models : Iterable[String], execType: String) : String = {
+        models.map(m =>
+            (getOptimalBatchSize(m, execType)*getExpectedExecutionTime(m), m)).minBy(x => x._1)._2
     }
 
     /**
