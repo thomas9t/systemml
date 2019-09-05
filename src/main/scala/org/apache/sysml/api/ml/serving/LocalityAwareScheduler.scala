@@ -57,20 +57,20 @@ object ExecutorQueueManager extends Runnable {
                         val queues = diskQueues ++ cacheQueues ++ localQueue
                         val nextRequest = _scheduler.modelQueues.get(m).peek()
                         queues.foreach ( queue => {
-                            val qsize = _scheduler.modelQueues.get(m).size()
-                            if ((nextRequest ne queue.getPrevRequest(m)) && (qsize > 0)) {
-                                val nextBatchSize = min(qsize, _scheduler.getOptimalBatchSize(m, queue.getExecType))
-                                assert(nextBatchSize > 0, "An error occurred - batch size should not be zero")
-                                LOG.debug("Enqueuing: " + nextBatchSize + " for: " + m + " onto: " + queue.getName)
-                                val nextBatch = Batch(
-                                    nextBatchSize, nextBatchSize*_scheduler.getExpectedExecutionTime(m),
-                                    nextRequest.receivedTime - System.nanoTime(), nextRequest.model.name)
-                                queue.enqueue(nextBatch)
-                                LOG.info("Batch enqueued onto: " + queue.getName)
-                            }
+                                val qsize = _scheduler.modelQueues.get(m).size()
+                                if ((nextRequest ne queue.getPrevRequest(m)) && (qsize > 0)) {
+                                    val nextBatchSize = min(qsize, _scheduler.getOptimalBatchSize(m, queue.getExecType))
+                                    assert(nextBatchSize > 0, "An error occurred - batch size should not be zero")
+                                    LOG.debug("Enqueuing: " + nextBatchSize + " for: " + m + " onto: " + queue.getName)
+                                    val nextBatch = Batch(
+                                        nextBatchSize, nextBatchSize*_scheduler.getExpectedExecutionTime(m),
+                                        nextRequest.receivedTime - System.nanoTime(), nextRequest.model.name)
+                                    queue.enqueue(nextBatch)
+                                    LOG.info("Batch enqueued onto: " + queue.getName)
+                                }
                             queue.updatePrevRequest(m, nextRequest) } )
+                        nextRequest.statistics.preschedulingTime = System.nanoTime() - nextRequest.receivedTime
                         }
-                    }
                 }
             }
         }
