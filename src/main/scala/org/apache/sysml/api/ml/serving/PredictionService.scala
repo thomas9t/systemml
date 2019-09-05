@@ -54,7 +54,8 @@ import org.apache.sysml.runtime.matrix.MatrixCharacteristics
 import org.apache.sysml.runtime.util.DataConverter
 import org.apache.commons.logging.LogFactory
 
-import scala.concurrent.ExecutionContext.Implicits.global
+// import scala.concurrent.ExecutionContext
+
 // format: can be file, binary, csv, ijv, jpeg, ...
 
 case class RequestStatistics(var batchSize: Int = -1,
@@ -162,7 +163,7 @@ object PredictionService extends PredictionJsonProtocol with AddModelJsonProtoco
     val __DEBUG__ = false
 
     val LOG = LogFactory.getLog(classOf[PredictionService].getName)
-    val customConf = ConfigFactory.parseString("""
+    /*val customConf = ConfigFactory.parseString("""
         akka.http.server.idle-timeout=infinite
         akka.http.client.idle-timeout=infinite
         akka.http.host-connection-pool.idle-timeout=infinite
@@ -171,8 +172,11 @@ object PredictionService extends PredictionJsonProtocol with AddModelJsonProtoco
     """)
     val basicConf = ConfigFactory.load()
     val combined = customConf.withFallback(basicConf)
-    implicit val system = ActorSystem("systemml-prediction-service", ConfigFactory.load(combined))
+    implicit val system = ActorSystem("systemml-prediction-service", ConfigFactory.load(combined))*/
+    implicit val system = ActorSystem("systemml-prediction-service")
     implicit val materializer = ActorMaterializer()
+    implicit val executionContext = system.dispatchers.lookup("blocking-io-dispatcher")
+    println("EXECUTION CONTEXT TYPE: " + executionContext.getClass())
     implicit val timeout = akka.util.Timeout(300.seconds)
     val userPassword = new HashMap[String, String]()
     var bindingFuture: Future[Http.ServerBinding] = null
@@ -254,8 +258,6 @@ object PredictionService extends PredictionJsonProtocol with AddModelJsonProtoco
                                 validate(models.contains(request.name), "The model is not available.") {
                                     try {
                                         currNumRequests.increment()
-                                        println("CURR NUM THREADS => " + ManagementFactory.getThreadMXBean().getThreadCount())
-                                        println("CURR NUM REQUESTS => " + currNumRequests)
                                         val start = System.nanoTime()
                                         val processedRequest = processPredictionRequest(request)
                                         val deserializationTime = System.nanoTime() - start
