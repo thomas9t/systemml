@@ -42,9 +42,11 @@ object LocalityAwareScheduler extends BatchingScheduler {
     override def schedule(executor: JmlcExecutor) : Array[SchedulingRequest] = {
         var ret = Array[SchedulingRequest]()
         val execType = executor.getExecType
+        LOG.info("Running scheduler")
         dummyResponse.synchronized {
             val schedulableModels = getSchedulableModels(execType)
             if (schedulableModels.nonEmpty) {
+                LOG.info("Actually making scheduling decision")
                 val localQueueUtilization = if (schedulableModels.contains(executor.prevModel))
                     getExpectedExecutionTime(executor.prevModel) else getExpectedExecutionTime(executor.prevModel)
                 val otherQueueUtilization = (
