@@ -57,6 +57,7 @@ object LocalityAwareScheduler extends BatchingScheduler {
                 val nextBatchSize = min(modelQueues.get(nextModel).size(),
                     getOptimalBatchSize(nextModel, execType))
 
+                LOG.info(s"Scheduling ${nextBatchSize} requests for ${nextModel} onto ${executor.getName}")
                 assert(nextBatchSize > 0, "Something is wrong. Batch size should not be zero")
                 for (_ <- 0 until nextBatchSize) {
                     val next = modelQueues.get(nextModel).poll()
