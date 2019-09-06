@@ -42,7 +42,6 @@ object LocalityAwareScheduler extends BatchingScheduler {
     override def schedule(executor: JmlcExecutor) : Array[SchedulingRequest] = {
         var ret = Array[SchedulingRequest]()
         val execType = executor.getExecType
-        LOG.info("Running scheduler")
         dummyResponse.synchronized {
             val schedulableModels = getSchedulableModels(execType)
             if (schedulableModels.nonEmpty) {
@@ -87,19 +86,20 @@ object LocalityAwareScheduler extends BatchingScheduler {
         val statistics = if (_statistics) RequestStatistics() else null
         val schedulingRequest = SchedulingRequest(
             request, model, new CountDownLatch(1), System.nanoTime(), null, statistics)
+
         if (_statistics) {
             statistics.queueSize = modelQueues.get(model.name).size
             statistics.preprocWaitTime = System.nanoTime() - request.receivedTime
             statistics.receivedTime = request.receivedTime
         }
-
         modelQueues.get(model.name).add(schedulingRequest)
-
+        LOG.info(s"Received request for ${model.name}. Queue Size is now: ${statistics.queueSize}")
+        counter += 1
         try {
             schedulingRequest.latch.await(timeout.length, timeout.unit)
             schedulingRequest.response
         } catch {
-            case _ : scala.concurrent.TimeoutException => dummyResponse
+            case e: scala.concurrent.TimeoutException => dummyResponse
         }
     }
 }
