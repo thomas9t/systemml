@@ -49,18 +49,27 @@ object LocalityAwareScheduler extends BatchingScheduler {
                 LOG.info("Schedulable Models: " + schedulableModels.mkString(" "))
                 LOG.info("Local Model: " + executor.prevModel)
                 LOG.info("Other Models: " + (schedulableModels - executor.prevModel).mkString(" "))
-                val localQueueUtilization = if (schedulableModels.contains(executor.prevModel))
-                    getExpectedExecutionTime(executor.prevModel) else 0
+
+                val localPossible = schedulableModels.contains(executor.prevModel)
+                val localQueueUtilization = if (localPossible)
+                    getExpectedExecutionTime(executor.prevModel) else -1
+
                 LOG.info(s"Local Queue Utilization: ${localQueueUtilization}")
+
                 val otherModels = schedulableModels - executor.prevModel
-                val otherQueueUtilization = if (otherModels.size > 0)
-                    otherModels.map(x => getExpectedExecutionTime(x)).reduce(_ + _) else 0
+                val otherQueueUtilization = if (otherModels.nonEmpty)
+                    otherModels.map(x => getExpectedExecutionTime(x)).reduce(_ + _) else -1
+
                 LOG.info(s"Other Queue Utilization: ${otherQueueUtilization}")
-                val mode = if (localQueueUtilization >= otherQueueUtilization && !executor.prevModel.isEmpty)
+
+                val mode = if (localQueueUtilization >= otherQueueUtilization && localPossible)
                     ExecMode.LOCAL else ExecMode.GLOBAL_MEM
+
                 LOG.info(s"Exec mode: ${mode}")
+
                 val nextModel = if (mode == ExecMode.LOCAL)
                     executor.prevModel else getNextModel(schedulableModels - executor.prevModel, execType)
+
                 LOG.info(s"Next model: ${nextModel}")
 
                 val nextBatchSize = min(modelQueues.get(nextModel).size(),
@@ -68,9 +77,14 @@ object LocalityAwareScheduler extends BatchingScheduler {
                 LOG.info(s"Next batch size: ${nextBatchSize}")
 
                 LOG.info(s"Scheduling ${nextBatchSize} requests for ${nextModel} onto ${executor.getName} with mode ${mode}")
+                if (nextBatchSize == 0)
+                    LOG.error("Something is wrong. Batch size should not be zero")
+
                 assert(nextBatchSize > 0, "Something is wrong. Batch size should not be zero")
                 for (_ <- 0 until nextBatchSize) {
                     val next = modelQueues.get(nextModel).poll()
+                    if (next == null)
+                        LOG.error("Something is wrong. Next model should not be null")
                     assert(next != null, "Something is wrong. Next model should not be null")
                     ret :+= next
                 }
