@@ -56,7 +56,7 @@ object LocalityAwareScheduler extends BatchingScheduler {
                             schedulableModels - executor.prevModel
                         ).map(x => getExpectedExecutionTime(x)).reduce(_ + _)
                 LOG.info(s"Other Queue Utilization: ${otherQueueUtilization}")
-                val mode = if (localQueueUtilization >= otherQueueUtilization && executor.prevModel != null)
+                val mode = if (localQueueUtilization >= otherQueueUtilization && !executor.prevModel.isEmpty)
                     ExecMode.LOCAL else ExecMode.GLOBAL_MEM
                 LOG.info(s"Exec mode: ${mode}")
                 val nextModel = if (mode == ExecMode.LOCAL)
