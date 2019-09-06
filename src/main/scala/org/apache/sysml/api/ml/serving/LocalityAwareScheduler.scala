@@ -50,7 +50,7 @@ object LocalityAwareScheduler extends BatchingScheduler {
                 LOG.info("Local Model: " + executor.prevModel)
                 LOG.info("Other Models: " + (schedulableModels - executor.prevModel).mkString(" "))
                 val localQueueUtilization = if (schedulableModels.contains(executor.prevModel))
-                    getExpectedExecutionTime(executor.prevModel) else getExpectedExecutionTime(executor.prevModel)
+                    getExpectedExecutionTime(executor.prevModel) else 0
                 LOG.info(s"Local Queue Utilization: ${localQueueUtilization}")
                 val otherModels = schedulableModels - executor.prevModel
                 val otherQueueUtilization = if (otherModels.size > 0)
