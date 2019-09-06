@@ -48,15 +48,20 @@ object LocalityAwareScheduler extends BatchingScheduler {
                 LOG.info("Actually making scheduling decision")
                 val localQueueUtilization = if (schedulableModels.contains(executor.prevModel))
                     getExpectedExecutionTime(executor.prevModel) else getExpectedExecutionTime(executor.prevModel)
+                LOG.info(s"Local Queue Utilization: ${localQueueUtilization}")
                 val otherQueueUtilization = (
                             schedulableModels - executor.prevModel
                         ).map(x => getExpectedExecutionTime(x)).reduce(_ + _)
+                LOG.info(s"Other Queue Utilization: ${otherQueueUtilization}")
                 val mode = if (localQueueUtilization >= otherQueueUtilization) ExecMode.LOCAL else ExecMode.GLOBAL_MEM
+                LOG.info(s"Exec mode: ${mode}")
                 val nextModel = if (mode == ExecMode.LOCAL)
                     executor.prevModel else getNextModel(schedulableModels - executor.prevModel, execType)
+                LOG.info(s"Next model: ${nextModel}")
 
                 val nextBatchSize = min(modelQueues.get(nextModel).size(),
                     getOptimalBatchSize(nextModel, execType))
+                LOG.info(s"Next batch size: ${nextBatchSize}")
 
                 LOG.info(s"Scheduling ${nextBatchSize} requests for ${nextModel} onto ${executor.getName}")
                 assert(nextBatchSize > 0, "Something is wrong. Batch size should not be zero")
